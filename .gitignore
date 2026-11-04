@@ -1,0 +1,11 @@
+.env
+data/
+*.db*
+node_modules/
+deliverables/
+
+scratch/
+.env.*
+!.env.example
+*.log
+*.zip

@@ -1,0 +1,6 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {validateContent} from '../src/cms.mjs';
+const base={siteName:'Map fixture'};
+test('map coordinates accept zero and valid bounds, require a pair and reject invalid values',()=>{assert.equal(validateContent({...base,latitude:0,longitude:0}).latitude,'0');assert.equal(validateContent({...base,latitude:'-90',longitude:'180'}).longitude,'180');for(const input of [{latitude:27},{latitude:'91',longitude:85},{latitude:27,longitude:'181'},{latitude:'NaN',longitude:85},{latitude:'0x10',longitude:85}])assert.throws(()=>validateContent({...base,...input}));});
+test('map settings accept official maps links and reject deceptive domains or credentials',()=>{for(const url of ['https://www.google.com/maps?q=Kathmandu','https://maps.app.goo.gl/example','https://www.google.com/maps/embed?pb=example'])assert.equal(validateContent({...base,googleMapsUrl:url}).googleMapsUrl,url);for(const url of ['javascript:alert(1)','https://google.com.evil.test/maps','https://example.com/maps','https://google.com/search','https://user:password@www.google.com/maps'])assert.throws(()=>validateContent({...base,googleMapsUrl:url}));assert.equal(validateContent({...base,googleMapsUrl:'',latitude:'',longitude:''}).googleMapsUrl,'');});

@@ -1,0 +1,23 @@
+{
+  "name": "dynamic-life-success",
+  "version": "2.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.mjs",
+    "dev": "node --env-file-if-exists=.env --watch server.mjs",
+    "test": "node --env-file-if-exists=.env --test --test-concurrency=1 test/*.test.mjs",
+    "db:migrate": "node --env-file-if-exists=.env scripts/migrate.mjs",
+    "db:migrate:sqlite": "node --env-file-if-exists=.env scripts/migrate-sqlite.mjs",
+    "db:export": "node --env-file-if-exists=.env scripts/transfer.mjs export",
+    "db:restore": "node --env-file-if-exists=.env scripts/transfer.mjs restore",
+    "db:local": "node --env-file-if-exists=.env scripts/local-postgres.mjs"
+  },
+  "dependencies": {
+    "nodemailer": "^10.3.1",
+    "pg": "^8.23.1"
+  }
+}

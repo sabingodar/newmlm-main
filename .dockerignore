@@ -1,0 +1,9 @@
+.git
+.env
+data
+node_modules
+test
+scratch
+deliverables
+.env.*
+!.env.example
