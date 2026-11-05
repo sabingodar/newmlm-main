@@ -32,7 +32,8 @@ async function resource(key,page=1){
  return call('member/'+key+'?page='+page);
 }
 function table(items,columns){return `<div class="table-scroll"><table><thead><tr>${columns.map(([,title])=>`<th>${title}</th>`).join('')}</tr></thead><tbody>${items.length?items.map(row=>`<tr>${columns.map(([key])=>`<td>${['amount','balance_after'].includes(key)?formatMoney(row[key]):escapeHtml(row[key]??'—')}</td>`).join('')}</tr>`).join(''):`<tr><td colspan="${columns.length}"><div class="empty">No records to show.</div></td></tr>`}</tbody></table></div>`;}
-async function showPage(page){
+function showPage(page){return window.swapWorkspace(()=>renderMemberPage(page));}
+async function renderMemberPage(page){
  if(memberSession.mustChangePassword)return;const version=++navigationVersion;activePage=page;document.title=(window.memberPageTitles[page]||page)+' · '+(memberSession.branding.siteName||'Dynamic Life Success');history.replaceState(null,'',location.pathname+location.search+'#'+page);const content=document.querySelector('#member-content');document.querySelector('#member-sidebar').classList.remove('open');document.querySelector('#member-crumb').textContent=window.memberPageTitles[page]||page;document.querySelectorAll('[data-portal-page]').forEach(b=>b.classList.toggle('selected',b.dataset.portalPage===page));content.innerHTML='<div class="page-heading"><h1>'+escapeHtml(window.memberPageTitles[page]||page)+'</h1></div>';
  try{
   if(page==='tracking'){content.innerHTML='<div class="page-heading"><h1>Track Order & Delivery</h1></div><section class="panel member-form" id="member-tracker"></section>';window.mountOrderTracker({container:content.querySelector('#member-tracker'),api:call,previewId});return;}

@@ -274,3 +274,6 @@ A pending gateway order can be continued or checked from member Order Details; A
 Official integration references: https://developer.esewa.com.np/pages/Epay and https://docs.khalti.com/khalti-epayment/ . The eSewa sandbox status endpoint follows its official documentation (uat.esewa.com.np), separately from the rc-epay form endpoint. If the provider changes its sandbox routing, verify against its current official documentation before acceptance testing.
 
 Portable backup format v19 adds payment_settings and gateway_attempts, retaining encrypted merchant configuration and original payment attempts. Earlier backups import with COD enabled and other methods Off. Update the website origin for future payments after moving hosting; existing attempts retain their original callback configuration and can still be verified from order details. Preserve original-domain redirects while pending gateway payments complete.
+
+
+Homepage first paint is server-rendered from the current published CMS content and product listing. Browser and server share storefront-markup.js; startup consumes escaped public bootstrap JSON and binds the existing HTML instead of replacing it. No member, session or merchant credentials are included in that bootstrap. Menu navigation keeps the previous visual until the destination data is ready, without persisting private page snapshots.
