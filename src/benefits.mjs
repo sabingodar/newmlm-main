@@ -32,12 +32,12 @@ export async function settleRewards(c,orderId,data){
  if(data.createdVia!=='Member checkout'||!data.userId)return;
  const cancelled=data.status==='Cancelled'||data.paymentStatus==='Refunded';
  if(cancelled){const used=(await c.query('SELECT coupon_id FROM coupon_redemptions WHERE order_id=$1',[orderId])).rows[0];if(used){await c.query('SELECT id FROM shop_coupons WHERE id=$1 FOR UPDATE',[used.coupon_id]);await c.query('UPDATE coupon_redemptions SET released=true WHERE order_id=$1',[orderId]);}}
- const people=[Number(data.userId),Number(data.referrerId)].filter(Boolean).sort((a,b)=>a-b);for(const id of new Set(people))await rewardBalance(c,id,true);
+ const people=[Number(data.userId),Number(data.referrerId),...(data.items||[]).map(l=>Number(l.shareAttribution?.userId))].filter(Boolean).sort((a,b)=>a-b);for(const id of new Set(people))await rewardBalance(c,id,true);
  if(cancelled){if(data.rewardPoints)await entry(c,data.userId,data.rewardPoints,'redemption-return:'+orderId,'Returned redeemed points',orderId);for(const earned of (await c.query("SELECT * FROM member_reward_ledger WHERE order_id=$1 AND reference IN ($2,$3)",[orderId,'purchase-earned:'+orderId,'sales-earned:'+orderId])).rows)await entry(c,earned.user_id,-Number(earned.amount),'earned-reversal:'+orderId,'Reversed rewards on refund/cancellation',orderId);return;}
  if(data.status==='Delivered'&&data.paymentStatus==='Paid'){
   const total=kind=>Math.round((data.items||[]).reduce((n,line)=>n+(line.rewardSettings?.enabled?Number(line.rewardSettings[kind]||0)*line.quantity:0),0)*100)/100;
   await entry(c,data.userId,total('purchasePointsPerUnit'),'purchase-earned:'+orderId,'Purchase reward points',orderId);
-  if(data.referrerId&&Number(data.referrerId)!==Number(data.userId))await entry(c,data.referrerId,total('salesPointsPerUnit'),'sales-earned:'+orderId,'Referral sales reward points',orderId);
+  const sales=new Map();for(const line of data.items||[]){const recipient=Number(line.shareAttribution?.userId||data.referrerId);if(!recipient||recipient===Number(data.userId)||!line.rewardSettings?.enabled)continue;sales.set(recipient,(sales.get(recipient)||0)+Math.round(Number(line.rewardSettings.salesPointsPerUnit||0)*100)*line.quantity);}for(const [recipient,points] of [...sales].sort((a,b)=>a[0]-b[0]))await entry(c,recipient,points/100,'sales-earned:'+orderId,'Referral sales reward points',orderId);
  }
 }
 export function createBenefits(db){

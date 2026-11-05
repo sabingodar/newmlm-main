@@ -54,7 +54,7 @@ export function authorizeAdmin(p,path,method){
  if(path.startsWith('/api/coupons'))return requirePermission(p,'benefits.manage');
  if(path==='/api/settings')return requirePermission(p,...(method==='GET'?['settings.view','settings.manage','products.manage','users.preview','benefits.manage']:['settings.manage','benefits.manage']));
  if(['/api/media','/api/hero-video'].includes(path))return requirePermission(p,'media.manage');
- if(['/api/about-page','/api/blog-posts','/api/email-settings'].some(prefix=>path.startsWith(prefix)))return requirePermission(p,...(method==='GET'?['settings.view','settings.manage']:['settings.manage']));
+ if(['/api/legal-pages','/api/about-page','/api/blog-posts','/api/email-settings'].some(prefix=>path.startsWith(prefix)))return requirePermission(p,...(method==='GET'?['settings.view','settings.manage']:['settings.manage']));
  if(path==='/api/audit')return requirePermission(p,'reports.view');
  if(path==='/api/archive')return requirePermission(p,'archive.view');
  if(['/api/import','/api/stage'].includes(path))return requirePermission(p,'import.manage');

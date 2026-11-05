@@ -1,3 +1,4 @@
+import {settleDirectSales} from './product-sharing.mjs';
 import {snapshotNetworkCommission,settleNetworkCommission} from './network-commissions.mjs';
 import {settleRankOrder,rankRule} from './rank-rewards.mjs';
 import {journalCentral,releaseInventoryOrder} from './inventory-core.mjs';
@@ -42,7 +43,7 @@ export function createRepository(db) {
     let validated=options.dispatchOnly?null:validate(kind,input);
     return db.transaction(async client=>{
       const centralEffects=[];
-      if(['orders','ranks'].includes(kind))await client.query('SELECT pg_advisory_xact_lock(76241905)');
+      if(['orders','ranks','users'].includes(kind))await client.query('SELECT pg_advisory_xact_lock(76241905)');
       if(['products','users'].includes(kind)&&id){const deleted=(await client.query("SELECT data->>'deletedAt' AS deleted FROM records WHERE id=$1 AND kind=$2 FOR UPDATE",[id,kind])).rows[0];if(deleted?.deleted)fail('Record was deleted',404);}
       const existing=id?(await client.query('SELECT * FROM records WHERE kind=$1 AND id=$2 FOR UPDATE',[kind,id])).rows[0]:null;
       if(id&&!existing)fail('Record not found',404);
@@ -119,7 +120,8 @@ export function createRepository(db) {
       for(const effect of centralEffects)await journalCentral(client,effect.productId,effect.delta,'order:'+saved.id+':legacy-'+effect.type,effect.type==='cancel'?'Returned cancelled legacy order stock':'Reserved manual order stock',options.actor||'admin',{orderId:Number(saved.id)});
       if(kind==='products')await journalCentral(client,Number(saved.id),old?Number(data.stock)-Number(old.stock):0,'product:'+saved.id+':version:'+saved.version,'Adjusted central stock in product editor',options.actor||'admin');
       if(kind==='orders'&&!old)await snapshotNetworkCommission(client,Number(saved.id),data.userId);
-      if(kind==='orders'){await settleNetworkCommission(client,Number(saved.id),data,options.actor||'system');await settleRewards(client,saved.id,data);await settleRankOrder(client,data,options.actor||'system');}
+      if(kind==='orders'){await settleNetworkCommission(client,Number(saved.id),data,options.actor||'system');await settleDirectSales(client,Number(saved.id),data,options.actor||'system');await settleRewards(client,saved.id,data);await settleRankOrder(client,data,options.actor||'system');}
+      if(kind==='users'&&(!old||input.sponsor!==undefined&&data.sponsor!==old.sponsor)){const sponsor=String(data.sponsor||'').trim();let referrer=null;if(sponsor){const matches=(await client.query("SELECT id FROM records WHERE kind='users' AND data->>'status'='Active' AND data->>'deletedAt' IS NULL AND lower(COALESCE(NULLIF(data->>'username',''),data->>'legacyUsername'))=lower($1)",[sponsor])).rows;if(matches.length!==1||Number(matches[0].id)===Number(saved.id))fail('Choose a valid sponsor username');referrer=matches[0].id;const cycle=(await client.query('WITH RECURSIVE chain AS (SELECT user_id,referrer_id FROM member_profiles WHERE user_id=$1 UNION SELECT p.user_id,p.referrer_id FROM member_profiles p JOIN chain c ON p.user_id=c.referrer_id) SELECT 1 FROM chain WHERE user_id=$2',[referrer,saved.id])).rowCount;if(cycle)fail('This sponsor relationship would create a cycle');}await client.query('UPDATE member_profiles SET referrer_id=$2 WHERE user_id=$1',[saved.id,referrer]);}
       if(kind==='users'&&input.location!==undefined)await persistLocation(client,saved.id,data.location);
       if(kind==='users'&&old&&old.email!==data.email)await client.query('UPDATE member_profiles SET email_verified=NULL WHERE user_id=$1',[saved.id]);
       if(kind==='users'&&old&&old.phone!==data.phone)await client.query('UPDATE member_profiles SET mobile_verified=NULL WHERE user_id=$1',[saved.id]);
