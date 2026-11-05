@@ -1,3 +1,4 @@
+import {initializeAdmin} from '../src/auth.mjs';
 import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
@@ -77,7 +78,7 @@ test('temporary imported admin passwords gate the workspace and can be changed w
  assert.equal((await req('/api/admin-password','POST',{currentPassword:'wrong',password:'PersonalFixture6!',confirmation:'PersonalFixture6!'},c)).status,400);
  await ok(await req('/api/admin-password','POST',{currentPassword:'six123',password:'PersonalFixture6!',confirmation:'PersonalFixture6!'},c));assert.equal((await req('/api/session','GET',undefined,c)).status,401);
  assert.equal((await req('/api/login','POST',{username:staff.username,password:'six123'},null)).status,401);const fresh=await login(staff.username,'PersonalFixture6!');assert.equal((await ok(await req('/api/session','GET',undefined,fresh))).mustChangePassword,false);
- assert.equal((await req('/api/admin-password','POST',{currentPassword:password,password:'AnotherOwnerFixture!',confirmation:'AnotherOwnerFixture!'})).status,400);
+ assert.equal((await req('/api/admin-password','POST',{currentPassword:'incorrect-owner-current',password:'AnotherOwnerFixture!',confirmation:'AnotherOwnerFixture!'})).status,400);
 });
 
 test('network commission settings require their own menu and management permissions',async()=>{
@@ -86,3 +87,5 @@ test('network commission settings require their own menu and management permissi
  await account('commission_center','Dispatch Center Manager',dispatchA.id,{allow:['commission-settings.view','commission-settings.manage'],deny:[]});const center=await login('commission_center');assert.equal((await req('/api/commission-settings','PUT',{...source.data,version:source.version},center)).status,403);
  const saved=await ok(await req('/api/commission-settings','PUT',{...source.data,version:source.version,stepEnabled:true,steps:[{rate:5}],affiliateEnabled:true,affiliateRate:10}));assert.equal(saved.version,source.version+1);assert.equal((await req('/api/commission-settings','PUT',{...source.data,version:source.version})).status,409);const preview=await ok(await req('/api/commission-settings/calculate','POST',{amount:100,uplineCount:3}));assert.equal(preview.stepTotal,'5.00');assert.equal(preview.affiliateTotal,'1.00');
 });
+
+test('primary owner changes password through the API and retains it after initialization',async()=>{const old=owner,r=await req('/api/admin-password','POST',{currentPassword:password,password:'own123',confirmation:'own123'});await ok(r);assert.match(r.headers.get('set-cookie'),/Max-Age=0/);assert.equal((await req('/api/session','GET',undefined,old)).status,401);assert.equal((await req('/api/login','POST',{username:'admin',password},null)).status,401);owner=await login('admin','own123');assert.equal((await ok(await req('/api/session'))).isOwner,true);await initializeAdmin(db,'admin',password);assert.equal((await req('/api/session')).status,200);const next=await login('admin','own123');assert.equal((await req('/api/session','GET',undefined,next)).status,200);});

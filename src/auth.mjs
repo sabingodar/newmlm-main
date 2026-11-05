@@ -7,7 +7,8 @@ export async function initializeAdmin(db,username,password) {
   if(!password||password.length<12)throw Error('Set ADMIN_PASSWORD to at least 12 characters.');
   await db.transaction(async client=>{
     await client.query('SELECT pg_advisory_xact_lock(76241904)');
-    const old=(await client.query('SELECT * FROM administrators WHERE username=$1',[username])).rows[0];
+    const old=(await client.query('SELECT * FROM administrators WHERE username=$1 FOR UPDATE',[username])).rows[0];
+    if(old?.is_owner&&old.password_managed_in_app){await client.query("UPDATE administrators SET role='Admin',status='Active',deleted_at=NULL WHERE username=$1",[username]);return;}
     if(old&&timingSafeEqual(await derive(password,old.salt,64),Buffer.from(old.password_hash,'hex'))){await client.query("UPDATE administrators SET is_owner=true,role='Admin',status='Active',deleted_at=NULL WHERE username=$1",[username]);return;}
     const salt=randomBytes(16).toString('hex');const hash=(await derive(password,salt,64)).toString('hex');
     await client.query("INSERT INTO administrators(username,salt,password_hash,credential_version,is_owner,name) VALUES($1,$2,$3,$4,true,$1) ON CONFLICT(username) DO UPDATE SET salt=EXCLUDED.salt,password_hash=EXCLUDED.password_hash,credential_version=EXCLUDED.credential_version,is_owner=true,role='Admin',status='Active',deleted_at=NULL",[username,salt,hash,randomBytes(16).toString('hex')]);
