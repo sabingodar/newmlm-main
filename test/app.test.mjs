@@ -7,6 +7,16 @@ import { join } from 'node:path';
 import {createDatabase} from '../src/database.mjs';
 import {randomBytes} from 'node:crypto';
 const password='IntegrationTest!2026';
+test('hero upload requires admin and serves seekable video bytes',async()=>{
+ const login=await request('/api/login','POST',{username:'admin',password},false);
+ const auth=login.headers.get('set-cookie').split(';')[0],content=Buffer.from('0000ftypisom-test-video');
+ assert.equal((await fetch(base+'/api/hero-video',{method:'POST',headers:{'Content-Type':'video/mp4'},body:content})).status,401);
+ const upload=await fetch(base+'/api/hero-video',{method:'POST',headers:{Cookie:auth,'Content-Type':'video/mp4'},body:content});
+ assert.equal(upload.status,201);const {url}=await upload.json();
+ const part=await fetch(base+url,{headers:{Range:'bytes=4-7'}});assert.equal(part.status,206);assert.equal(await part.text(),'ftyp');
+ assert.equal((await fetch(base+url,{headers:{Range:'bytes=999-'}})).status,416);
+ assert.equal((await fetch(base+url,{method:'HEAD'})).headers.get('content-length'),String(content.length));
+});
 const port=3198, base=`http://localhost:${port}`;
 let processHandle,dir,cookie,adminDb,testUrl;
 const databaseName='dls_test_'+randomBytes(8).toString('hex');
@@ -33,3 +43,21 @@ test('pages start with navigation, versioned assets revalidate, private data sta
 });
 
 test('admin blog CRUD scopes publishing and preserves posts when slider settings save',async()=>{const signed=await request('/api/login','POST',{username:'admin',password},false);cookie=signed.headers.get('set-cookie').split(';')[0];assert.equal((await request('/api/blog-posts','GET',undefined,false)).status,401);const post={slug:'cms-fixture',title:'CMS fixture',excerpt:'Example',body:'Test content',imageUrl:'',enabled:true};assert.equal((await request('/api/blog-posts','POST',post)).status,200);let rows=await(await request('/api/blog-posts')).json(),saved=rows.find(p=>p.slug===post.slug);assert.ok((await(await request('/api/storefront','GET',undefined,false)).json()).content.posts.some(p=>p.slug===post.slug));assert.equal((await request('/api/blog-posts/'+post.slug,'PUT',{...saved,enabled:false})).status,200);assert.equal((await request('/api/blog-posts/'+post.slug,'PUT',saved)).status,409);assert.ok(!(await(await request('/api/storefront','GET',undefined,false)).json()).content.posts.some(p=>p.slug===post.slug));let current=await(await request('/api/settings')).json();delete current.storefront.posts;assert.equal((await request('/api/settings','PUT',{storefront:current.storefront})).status,200);rows=await(await request('/api/blog-posts')).json();saved=rows.find(p=>p.slug===post.slug);assert.ok(saved);assert.equal((await request('/api/blog-posts/'+post.slug,'DELETE',{version:saved.version})).status,200);assert.ok(!(await(await request('/api/blog-posts')).json()).some(p=>p.slug===post.slug));assert.equal((await request('/api/email-settings','GET',undefined,false)).status,401);assert.equal((await request('/api/member/forgot-password','POST',{username:'x',email:'x@example.test'},false)).status,503);});
+
+test('admin login makes the storefront account link target the admin dashboard until logout',async()=>{const login=await request('/api/login','POST',{username:'admin',password},false);cookie=login.headers.get('set-cookie').split(';')[0];const status=await request('/api/account-status');assert.equal(status.headers.get('cache-control'),'no-store');assert.deepEqual(await status.json(),{authenticated:true,dashboardUrl:'/admin/dashboard',role:'admin'});assert.equal((await request('/api/logout','POST',{})).status,200);assert.deepEqual(await(await request('/api/account-status')).json(),{authenticated:false});});
+
+test('About CMS creates, edits, hides and deletes content without exposing drafts',async()=>{const login=await request('/api/login','POST',{username:'admin',password},false);cookie=login.headers.get('set-cookie').split(';')[0];assert.equal((await request('/api/about-page','GET',undefined,false)).status,401);assert.equal((await request('/about','GET',undefined,false)).status,200);let state=await(await request('/api/about-page')).json();assert.ok(state.page);const input={...state.page,title:'About fixture',summary:'Short intro',body:'Full company text',mission:'Mission fixture',vision:'Vision fixture',photos:[],enabled:true,version:state.version};assert.equal((await request('/api/about-page','PUT',input)).status,200);assert.equal((await request('/api/about-page','PUT',input)).status,409);let data=await(await request('/api/storefront','GET',undefined,false)).json();assert.equal(data.about.title,'About fixture');assert.equal(data.settings.aboutPage,undefined);state=await(await request('/api/about-page')).json();assert.equal((await request('/api/about-page','PUT',{...state.page,enabled:false,version:state.version})).status,200);assert.equal((await(await request('/api/storefront','GET',undefined,false)).json()).about,null);state=await(await request('/api/about-page')).json();assert.equal((await request('/api/about-page','PUT',{...state.page,photos:[{url:'https://outside.test/photo.jpg',caption:'Invalid'}],version:state.version})).status,400);assert.equal((await request('/api/about-page','DELETE',{version:state.version})).status,200);assert.equal((await(await request('/api/about-page')).json()).page,null);state=await(await request('/api/about-page')).json();assert.equal((await request('/api/about-page','POST',{...input,version:state.version})).status,200);assert.equal((await(await request('/api/storefront','GET',undefined,false)).json()).about.body,'Full company text');});
+
+test('single hero media can be inactivated, edited and deleted while photo slides remain available',async()=>{
+ const login=await request('/api/login','POST',{username:'admin',password},false);cookie=login.headers.get('set-cookie').split(';')[0];
+ const old=(await(await request('/api/settings')).json()).storefront;
+ const config={...old,heroMode:'youtube',heroYoutubeUrl:'https://youtu.be/vft3QATH_8k',heroVideoUrl:'',heroVideoTitle:'Bottom centre fixture',heroEnabled:true};
+ assert.equal((await request('/api/settings','PUT',{storefront:config})).status,200);
+ assert.equal((await(await request('/api/storefront')).json()).content.heroMode,'youtube');
+ assert.equal((await request('/api/settings','PUT',{storefront:{...config,heroEnabled:false}})).status,200);
+ assert.equal((await(await request('/api/storefront')).json()).content.heroMode,'off');
+ assert.equal((await(await request('/api/settings')).json()).storefront.heroYoutubeUrl,config.heroYoutubeUrl);
+ assert.equal((await request('/api/settings','PUT',{storefront:{...config,heroMode:'slides',heroYoutubeUrl:'',heroEnabled:true}})).status,200);
+ assert.equal((await(await request('/api/storefront')).json()).content.heroYoutubeUrl,'');
+ assert.equal((await request('/api/settings','PUT',{storefront:old})).status,200);
+});

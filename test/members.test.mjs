@@ -42,3 +42,52 @@ test('binary trees enforce ownership, atomic placements and single-use registrat
  const invitedCookie=await login('TREE_INVITED','pass12');assert.equal((await(await request('/api/member/session','GET',undefined,invitedCookie)).json()).mustChangePassword,false);assert.equal((await request('/api/member/tree?username=TREE_ROOT','GET',undefined,invitedCookie)).status,403);
  assert.equal((await request('/user/binary-tree','GET',undefined,null)).status,200);
 });
+
+test('user listing displays assigned affiliate ranks and filters before pagination',async()=>{
+ const member=await get(a.id),rankId=member.rank.id;
+ const ranked=await(await request('/api/records/users?affiliateRankId='+rankId+'&page=1&limit=1')).json();
+ assert.ok(ranked.total>=1);assert.equal(ranked.items.length,1);assert.ok(ranked.items.every(u=>u.affiliateRankId===rankId));
+ const all=await(await request('/api/records/users?affiliateRankId='+rankId)).json();assert.equal(all.length,ranked.total);assert.equal(all.find(u=>u.id===a.id).affiliateRank,'Gold fixture');
+ const unassigned=await(await request('/api/records/users?affiliateRankId=none')).json();assert.ok(unassigned.some(u=>u.id===c.id));assert.ok(!unassigned.some(u=>u.id===a.id));assert.ok(unassigned.every(u=>u.affiliateRankId===null&&u.affiliateRank==='Not assigned'));
+ const searched=await(await request('/api/records/users?affiliateRankId='+rankId+'&q='+encodeURIComponent(member.user.username)+'&status='+encodeURIComponent(member.user.status)+'&page=1&limit=15')).json();assert.ok(searched.items.some(u=>u.id===a.id));assert.ok(searched.items.every(u=>u.affiliateRankId===rankId));
+ assert.equal((await request('/api/records/users?affiliateRankId=invalid')).status,400);
+ assert.equal((await request('/api/records/users?affiliateRankId=1%20OR%201=1')).status,400);
+ assert.equal((await request('/api/records/users?affiliateRankId='+rankId,'GET',undefined,memberCookie)).status,401);
+});
+
+test('member sorting uses the full filtered result before pagination',async()=>{
+ const make=async(name,status='Active')=>{const r=await request('/api/records/users','POST',{name:'SortDirectoryFixture '+name,email:name.toLowerCase()+'@sort.example.test',status});assert.equal(r.status,201);return r.json();};
+ const alpha=await make('Alpha'),zeta=await make('Zeta','Inactive'),beta=await make('Beta');
+ const rank=async(name,minPurchase)=>{const r=await request('/api/records/affiliates','POST',{name,minPurchase,bonus:0,status:'Active'});assert.equal(r.status,201);return r.json();};
+ const low=await rank('Sort Low Rank',100),high=await rank('Sort High Rank',1000);
+ for(const [user,r] of [[alpha,low],[zeta,high]]){const d=await get(user.id);assert.equal((await action(user.id,'rank',{version:d.user.version,rankId:r.id})).status,200);}
+ const list=async(sort,extra='')=>{const r=await request('/api/records/users?q=SortDirectoryFixture&sort='+sort+extra);assert.equal(r.status,200);return r.json();};
+ assert.deepEqual((await list('name-asc')).map(u=>u.id),[alpha.id,beta.id,zeta.id]);
+ assert.deepEqual((await list('name-desc')).map(u=>u.id),[zeta.id,beta.id,alpha.id]);
+ assert.deepEqual((await list('latest')).map(u=>u.id),[beta.id,zeta.id,alpha.id]);
+ assert.deepEqual((await list('oldest')).map(u=>u.id),[alpha.id,zeta.id,beta.id]);
+ assert.deepEqual((await list('rank-desc')).map(u=>u.id),[zeta.id,alpha.id,beta.id]);
+ assert.deepEqual((await list('rank-asc')).map(u=>u.id),[alpha.id,zeta.id,beta.id]);
+ assert.equal((await list('status-desc'))[0].status,'Inactive');assert.equal((await list('status-asc')).at(-1).status,'Inactive');
+ const second=await list('rank-desc','&page=2&limit=1');assert.equal(second.total,3);assert.equal(second.items[0].id,alpha.id);
+ assert.deepEqual((await list('name-asc','&affiliateRankId='+high.id+'&status=Inactive')).map(u=>u.id),[zeta.id]);
+ assert.equal((await request('/api/records/users?sort=__proto__')).status,400);
+ assert.equal((await request('/api/records/users?sort=name%20DROP%20TABLE')).status,400);
+});
+
+test('member Commission and Rewards tabs report real separate ledgers and independent pagination',async()=>{
+ const reg=await request('/api/cart/register','POST',{firstName:'Earnings',lastName:'Member',username:'earnings_victim',email:'earnings@example.test',phone:'9800000000',password:'victim6',confirmation:'victim6',location:fixtureLocation},null);assert.equal(reg.status,201);const victim=await reg.json();const victimCookie=reg.headers.get('set-cookie').split(';')[0];globalThis.earningsVictim={id:victim.id,cookie:victimCookie};
+ for(let i=0;i<22;i++){const response=await action(victim.id,'balance',{direction:'Credit',amount:'1.00',reason:'Referral commission',requestId:'commission-fixture-'+i});assert.equal(response.status,200);}assert.equal((await action(victim.id,'balance',{direction:'Debit',amount:'2.00',reason:'Commission reversal',requestId:'commission-reversal-fixture'})).status,200);
+ const rankResponse=await request('/api/records/ranks','POST',{name:'Commission matching reward',minPurchase:0,earthBv:0,skyBv:0,reward:3,status:'Active'});assert.equal(rankResponse.status,201);const ranked=await request('/api/rank-rewards','POST',{user:String(victim.id)});assert.equal(ranked.status,200);
+ for(let i=0;i<22;i++)assert.equal((await request('/api/users/'+victim.id+'/rewards','POST',{direction:'Credit',points:1,reason:'Point fixture',requestKey:'earnings-point-'+i})).status,200);
+ let response=await request('/api/users/'+victim.id+'/earnings?tab=commissions&page=2');assert.equal(response.status,200);const commissions=await response.json();assert.equal(commissions.total,23);assert.equal(commissions.items.length,3);assert.equal(commissions.credits,22);assert.equal(commissions.debits,2);assert.equal(commissions.net,20);
+ response=await request('/api/users/'+victim.id+'/earnings?tab=rewards&pointPage=2');const rewards=await response.json();assert.equal(response.status,200);assert.equal(rewards.rank.amount,3);assert.equal(rewards.rank.total,1);assert.equal(rewards.rank.items.length,1);assert.equal(rewards.points.balance,22);assert.equal(rewards.points.total,22);assert.equal(rewards.points.items.length,2);assert.equal(rewards.points.page,2);assert.equal(rewards.rank.page,1);assert.equal((await request('/api/users/'+victim.id+'/earnings?tab=commissions','GET',undefined,victimCookie)).status,401);assert.equal((await request('/api/users/'+victim.id+'/earnings?tab=rewards&pointPage=-1')).status,400);
+});
+
+test('member deletion hides the directory entry, revokes login and preserves financial/network history',async()=>{
+ const victim=globalThis.earningsVictim,detail=await get(victim.id);const child=await (await request('/api/records/users','POST',{name:'Preserved child',username:'preserved_child',email:'child@example.test',phone:'',sponsor:'',status:'Active'})).json();await db.query("UPDATE member_profiles SET parent_id=$1,position='Left' WHERE user_id=$2",[victim.id,child.id]);await db.query("INSERT INTO coordinator_assignments(user_id,role,country) VALUES($1,'country','NP')",[victim.id]);
+ const beforeLedger=(await db.query('SELECT * FROM member_ledger WHERE user_id=$1 ORDER BY id',[victim.id])).rows,beforePoints=(await db.query('SELECT * FROM member_reward_ledger WHERE user_id=$1 ORDER BY id',[victim.id])).rows;assert.equal((await request('/api/users/'+victim.id,'DELETE',{version:0})).status,409);
+ assert.equal((await request('/api/admin-users','POST',{username:'no_delete_staff',name:'Staff',email:'staff@example.test',role:'Admin Staff',status:'Active',password:'staff6'})).status,201);const login=await request('/api/login','POST',{username:'no_delete_staff',password:'staff6'},null);const staff=login.headers.get('set-cookie').split(';')[0];assert.equal((await request('/api/users/'+victim.id,'DELETE',{version:detail.user.version},staff)).status,403);
+ const payload={version:detail.user.version,reason:'Test archive'};assert.equal((await request('/api/users/'+victim.id,'DELETE',payload)).status,200);assert.equal((await request('/api/users/'+victim.id,'DELETE',payload)).status,200);const after=await get(victim.id);assert.ok(after.user.deletedAt);assert.equal(after.user.status,'Inactive');assert.equal(after.account.balance,detail.account.balance);assert.deepEqual((await db.query('SELECT * FROM member_ledger WHERE user_id=$1 ORDER BY id',[victim.id])).rows,beforeLedger);assert.deepEqual((await db.query('SELECT * FROM member_reward_ledger WHERE user_id=$1 ORDER BY id',[victim.id])).rows,beforePoints);assert.equal((await db.query('SELECT parent_id FROM member_profiles WHERE user_id=$1',[child.id])).rows[0].parent_id,String(victim.id));assert.equal((await db.query('SELECT * FROM coordinator_assignments WHERE user_id=$1',[victim.id])).rowCount,0);
+ const listed=await (await request('/api/records/users?q=earnings_victim&page=1&limit=15')).json();assert.equal(listed.total,0);assert.equal((await (await request('/api/users/lookup?q=earnings_victim')).json()).length,0);assert.equal((await request('/api/member/session','GET',undefined,victim.cookie)).status,401);assert.equal((await request('/api/member/login','POST',{username:'earnings_victim',password:'victim6'},null)).status,401);assert.equal((await action(victim.id,'status',{version:after.user.version,status:'Active',reason:'revive'})).status,409);assert.equal((await action(victim.id,'balance',{direction:'Credit',amount:'1',reason:'Edit deleted',requestId:'deleted-edit-001'})).status,409);assert.equal((await request('/api/users/'+victim.id+'/rewards','POST',{direction:'Credit',points:1,reason:'Edit deleted',requestKey:'deleted-points-001'})).status,409);assert.equal((await request('/api/records/users/'+victim.id,'PUT',{name:'Revive',username:'earnings_victim',email:'earnings@example.test',phone:'',sponsor:'',status:'Active'})).status,404);assert.equal((await request('/api/users/'+victim.id+'/earnings?tab=rewards')).status,200);assert.equal((await db.query("SELECT * FROM audit WHERE action='Deleted member' AND record_id=$1",[victim.id])).rowCount,1);
+});

@@ -1,0 +1,1 @@
+UPDATE settings SET data=jsonb_set(data,'{rewardRedemption}',jsonb_build_object('enabled',true,'pointValue',1,'discountOnly',true,'defaultMaxPercent',0,'categoryLimits','[]'::jsonb)||COALESCE(data->'rewardRedemption','{}'::jsonb)||jsonb_build_object('discountOnly',true));

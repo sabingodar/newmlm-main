@@ -1,0 +1,1 @@
+CREATE TABLE hero_video_assets (id UUID PRIMARY KEY, name TEXT NOT NULL, mime_type TEXT NOT NULL CHECK(mime_type IN ('video/mp4','video/webm')), content BYTEA NOT NULL CHECK(octet_length(content)>0 AND octet_length(content)<=26214400), created_at TIMESTAMPTZ NOT NULL DEFAULT now());

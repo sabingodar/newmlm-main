@@ -5,10 +5,10 @@
   window.businessIcons.affiliates=icon('ranks');
   window.businessNavigation=(labels)=>[
     ['WORKSPACE',['dashboard','users','products','orders']],
-    ['FINANCE & NETWORK',['deposits','withdrawals','plans','ranks','affiliates','pins']],
-    ['OPERATIONS',['leads','tickets','centers','tasks']],
-    ['ADMINISTRATION',['reports','settings','archive']]
-  ].map(([title,keys])=>`<div class="nav-group"><span class="nav-label">${title}</span>${keys.map(k=>`<a href="/admin/${k}" data-nav="${k}"><span>${icon(k==='affiliates'?'ranks':k)}</span>${labels[k]}</a>`).join('')}</div>`).join('');
+    ['FINANCE & NETWORK',['payment-settings','reward-settings','commission-settings','deposits','withdrawals','plans','ranks','affiliates','pins']],
+    ['OPERATIONS',['stock-transfers','dispatch-stock','dispatch-commissions','leads','tickets','dispatch-center','service-centers','tasks']],
+    ['ADMINISTRATION',['manage-admins','benefits','reports','settings','archive']]
+  ].filter(([,keys])=>keys.some(k=>!window.adminCanView||window.adminCanView(k))).map(([title,keys])=>`<div class="nav-group"><span class="nav-label">${title}</span>${keys.filter(k=>!window.adminCanView||window.adminCanView(k)).map(k=>`<a href="/admin/${k}" data-nav="${k}"><span>${icon(k==='affiliates'?'ranks':['dispatch-center','service-centers'].includes(k)?'centers':k==='manage-admins'?'users':k==='commission-settings'?'settings':k==='benefits'?'pins':k)}</span>${labels[k]}</a>`).join('')}</div>`).join('');
   window.businessDashboard=(d,esc,money)=>{
     const date=new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric',timeZone:'Asia/Kathmandu'});
     const max=Math.max(d.approvedDeposits,d.approvedWithdrawals,1),depositWidth=Math.max(0,d.approvedDeposits/max*430),withdrawWidth=Math.max(0,d.approvedWithdrawals/max*430);

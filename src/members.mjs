@@ -11,7 +11,7 @@ const text=(value,max=500)=>{const result=String(value??'').trim();if(result.len
 export function createMembers(db) {
   async function user(client,id,lock=false){const r=(await client.query("SELECT * FROM records WHERE kind='users' AND id=$1"+(lock?' FOR UPDATE':''),[numberId(id)])).rows[0];if(!r)fail('Member not found',404);return r;}
   async function audit(client,id,action,details={}){await client.query("INSERT INTO audit(action,kind,record_id,details) VALUES($1,'users',$2,$3)",[action,id,details]);}
-  async function lookup(q=''){return (await db.query("SELECT id,data->>'name' AS name,COALESCE(NULLIF(data->>'username',''),data->>'legacyUsername') AS username FROM records WHERE kind='users' AND (data->>'name' ILIKE $1 OR COALESCE(NULLIF(data->>'username',''),data->>'legacyUsername') ILIKE $1) ORDER BY id LIMIT 30",['%'+text(q,100).replace(/[\\%_]/g,'\\$&')+'%'])).rows;}
+  async function lookup(q=''){return (await db.query("SELECT id,data->>'name' AS name,COALESCE(NULLIF(data->>'username',''),data->>'legacyUsername') AS username FROM records WHERE kind='users' AND data->>'deletedAt' IS NULL AND (data->>'name' ILIKE $1 OR COALESCE(NULLIF(data->>'username',''),data->>'legacyUsername') ILIKE $1) ORDER BY id LIMIT 30",['%'+text(q,100).replace(/[\\%_]/g,'\\$&')+'%'])).rows;}
   async function related(id,kind,page=1){
     if(!['orders','deposits','withdrawals'].includes(kind))fail('Unknown member history',404);
     const u=await user(db,id),name=usernameOf(u.data);page=Number(page);if(!Number.isInteger(page)||page<1)fail('Invalid page');
@@ -44,7 +44,7 @@ export function createMembers(db) {
   async function relatedAll(u,kind){return (await db.query(`SELECT data FROM records WHERE kind=$1 AND (data->>'userId'=$2 OR (NOT data ? 'userId' AND $3<>'' AND $3=ANY(regexp_split_to_array(replace(COALESCE(data->>'customer',data->>'member',''),'@',''),E'\\n'))))`,[kind,String(u.id),usernameOf(u.data)])).rows;}
   async function checkVersion(u,input){if(!Number.isInteger(input.version)||input.version!==u.version)fail('This member changed. Refresh before saving.',409);}
   async function update(id,input){
-    return db.transaction(async client=>{const u=await user(client,id,true);await checkVersion(u,input);
+    return db.transaction(async client=>{const u=await user(client,id,true);if(u.data.deletedAt)fail('Deleted member is read-only',409);await checkVersion(u,input);
       const firstName=text(input.firstName,100),lastName=text(input.lastName,100),email=text(input.email,254),username=text(input.username,60);
       if(!firstName||!lastName||!email||!username)fail('First name, last name, email and username are required');
       if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail('Invalid email');if(!/^[a-zA-Z0-9_.-]{3,60}$/.test(username))fail('Username must contain 3–60 letters, digits, dots, underscores or hyphens');
@@ -64,11 +64,11 @@ export function createMembers(db) {
     if(kind==='password') {
       if(typeof input.password!=='string'||input.password.length<6||input.password.length>256||input.password!==input.confirmation)fail('Passwords must match and contain 6–256 characters');
       const salt=randomBytes(16).toString('hex'),hash=(await derive(input.password,salt,64)).toString('hex');
-      return db.transaction(async client=>{const u=await user(client,id,true);await client.query('INSERT INTO member_credentials(user_id,salt,password_hash,version,must_change_password) VALUES($1,$2,$3,$4,true) ON CONFLICT(user_id) DO UPDATE SET salt=EXCLUDED.salt,password_hash=EXCLUDED.password_hash,version=EXCLUDED.version,must_change_password=true,updated_at=now()',[u.id,salt,hash,randomBytes(16).toString('hex')]);await client.query('DELETE FROM member_sessions WHERE user_id=$1',[u.id]);await audit(client,u.id,'Changed member password');return {ok:true};});
+      return db.transaction(async client=>{const u=await user(client,id,true);if(u.data.deletedAt)fail('Deleted member is read-only',409);await client.query('INSERT INTO member_credentials(user_id,salt,password_hash,version,must_change_password) VALUES($1,$2,$3,$4,true) ON CONFLICT(user_id) DO UPDATE SET salt=EXCLUDED.salt,password_hash=EXCLUDED.password_hash,version=EXCLUDED.version,must_change_password=true,updated_at=now()',[u.id,salt,hash,randomBytes(16).toString('hex')]);await client.query('DELETE FROM member_sessions WHERE user_id=$1',[u.id]);await audit(client,u.id,'Changed member password');return {ok:true};});
     }
     return db.transaction(async client=>{
-      if(kind==='network')await client.query('SELECT pg_advisory_xact_lock(76241905)');
-      const u=await user(client,id,true);
+      if(['network','status'].includes(kind))await client.query('SELECT pg_advisory_xact_lock(76241905)');
+      const u=await user(client,id,true);if(u.data.deletedAt)fail('Deleted member is read-only',409);
       if(kind==='balance') {
         if(!['Credit','Debit'].includes(input.direction)||!/^\d{1,10}(?:\.\d{1,2})?$/.test(String(input.amount))||Number(input.amount)<=0)fail('Enter a positive amount with at most two decimals');
         const amount=Number(input.amount).toFixed(2),reason=text(input.reason,1000),requestId=text(input.requestId,100);
@@ -95,5 +95,6 @@ export function createMembers(db) {
   }
   async function bump(client,id){await client.query('UPDATE records SET version=version+1,updated_at=now() WHERE id=$1',[id]);}
   async function network(id){await user(db,id);return (await db.query(`WITH RECURSIVE tree AS (SELECT user_id,parent_id,position,0 AS depth,ARRAY[user_id] AS path FROM member_profiles WHERE user_id=$1 UNION ALL SELECT p.user_id,p.parent_id,p.position,t.depth+1,t.path||p.user_id FROM member_profiles p JOIN tree t ON p.parent_id=t.user_id WHERE t.depth<3 AND NOT p.user_id=ANY(t.path)) SELECT r.id,r.data->>'name' AS name,COALESCE(NULLIF(r.data->>'username',''),r.data->>'legacyUsername') AS username,t.parent_id,t.position,t.depth FROM tree t JOIN records r ON r.id=t.user_id ORDER BY t.depth,r.id LIMIT 100`,[id])).rows;}
-  return {lookup,detail,update,action,related,network};
+  async function remove(id,input,actor){if(['Dispatch Center Manager','Service Center Manager'].includes(actor.role))fail('Center managers cannot delete members',403);return db.transaction(async c=>{await c.query('SELECT pg_advisory_xact_lock(76241905)');const u=await user(c,id,true);if(u.data.deletedAt)return {deleted:true,replayed:true};if(Number(input.version)!==u.version)fail('Member changed. Refresh before deleting.',409);const assignments=(await c.query('SELECT * FROM coordinator_assignments WHERE user_id=$1',[u.id])).rows;const data={...u.data,status:'Inactive',deletedAt:new Date().toISOString(),deletedBy:actor.username,deletedReason:text(input.reason,1000)||'Deleted by administrator',deletedAssignments:assignments};await c.query('UPDATE records SET data=$2,version=version+1,updated_at=now() WHERE id=$1',[u.id,data]);await c.query('DELETE FROM member_sessions WHERE user_id=$1',[u.id]);await c.query('UPDATE member_password_resets SET used_at=now() WHERE user_id=$1 AND used_at IS NULL',[u.id]);await c.query('DELETE FROM coordinator_assignments WHERE user_id=$1',[u.id]);await audit(c,u.id,'Deleted member',{actor:actor.username,reason:data.deletedReason,assignmentsRemoved:assignments.length,historyPreserved:true});return {deleted:true};});}
+  return {lookup,detail,update,action,related,network,remove};
 }

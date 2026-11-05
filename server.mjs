@@ -1,3 +1,16 @@
+import {panelShell} from './src/panel-shell.mjs';
+import {createPayments} from './src/payments.mjs';
+import {createRewardSettings,validateRewardCategories} from './src/redemption-policy.mjs';
+import {createNetworkCommissions} from './src/network-commissions.mjs';
+import {createMemberEarnings} from './src/member-earnings.mjs';
+import {createRankRewards} from './src/rank-rewards.mjs';
+import {createTransferCorrections} from './src/transfer-corrections.mjs';
+import {createDispatchCommissions} from './src/dispatch-commissions.mjs';
+import {createInventory} from './src/inventory.mjs';
+import {transferPrint,orderBillPrint,dispatchPrint} from './src/inventory-print.mjs';
+import {createAdminUsers} from './src/admin-users.mjs';
+import {seedRolePermissions,permissionsFor,authorizeAdmin,can,centerScope,requirePermission,isCenterManager} from './src/admin-permissions.mjs';
+import {createCenters} from './src/centers.mjs';
 import http from 'node:http';
 import {readFileSync,existsSync} from 'node:fs';
 import {basename} from 'node:path';
@@ -18,6 +31,8 @@ import {createRegions} from './src/regions.mjs';
 import {createCategories,commissions,commissionDefaults} from './src/product-config.mjs';
 import {createStorefront,storefrontDefaults,publishedStorefront,validateStorefront} from './src/storefront.mjs';
 import {createBenefits,rewardsDefaults,validateRewards} from './src/benefits.mjs';
+import {readHeroVideo,videoRange} from './src/hero-video.mjs';
+import {aboutPage,aboutVersion,publicAbout,validateAbout} from './src/about.mjs';
 import {createRecovery} from './src/password-recovery.mjs';
 import {createShopRegistration} from './src/shop-registration.mjs';
 
@@ -26,14 +41,18 @@ const username=process.env.ADMIN_USERNAME||'admin';
 const db=createDatabase();
 await migrate(db);
 await initializeAdmin(db,username,process.env.ADMIN_PASSWORD);
+await seedRolePermissions(db);
 await db.query('INSERT INTO settings(id,data) VALUES(1,$1) ON CONFLICT(id) DO NOTHING',[{siteName:'Dynamic Life Success',tagline:'Better living. Shared success.',email:'',phone:'',address:'Nepal',currency:'NPR'}]);
-const repository=createRepository(db),auth=createAuth(db,username);
+const repository=createRepository(db),auth=createAuth(db,username),adminUsers=createAdminUsers(db);
+const networkCommissions=createNetworkCommissions(db),rankRewards=createRankRewards(db),memberEarnings=createMemberEarnings(db);
+const centerManagement=createCenters(db,repository),inventory=createInventory(db),transferCorrections=createTransferCorrections(db),dispatchCommissions=createDispatchCommissions(db);
 const members=createMembers(db),memberAuth=createMemberAuth(db),binaryTree=createBinaryTree(db),commerce=createCommerce(db),teamLists=createTeamLists(db);
 const regions=createRegions(db);
 const categories=createCategories(db);
 const storefront=createStorefront(db);
-const benefits=createBenefits(db),shopRegister=createShopRegistration(db),recovery=createRecovery(db);
-const assets={ '/password-tools.js':['password-tools.js','text/javascript'],'/cms-tabs.js':['cms-tabs.js','text/javascript'], '/startup.js':['startup.js','text/javascript'], '/shop-checkout.js':['shop-checkout.js','text/javascript'],'/promotions-admin.js':['promotions-admin.js','text/javascript'], '/delivery.js':['delivery.js','text/javascript'], '/storefront.js':['storefront.js','text/javascript'],'/storefront-admin.js':['storefront-admin.js','text/javascript'],'/storefront.css':['storefront.css','text/css'], '/product-editor.js':['product-editor.js','text/javascript'],'/geography.js':['geography.js','text/javascript'],'/regions.js':['regions.js','text/javascript'],'/app.js':['app.js','text/javascript'],'/dashboard.js':['dashboard.js','text/javascript'],'/cms.js':['cms.js','text/javascript'],'/admin.css':['admin.css','text/css'],'/brand/logo.jpg':['brand/logo.jpg','image/jpeg'],'/style.css':['style.css','text/css'],'/import.js':['import.js','text/javascript'],'/admin/import':['import.html','text/html; charset=utf-8']};
+const payments=createPayments(db);
+const rewardSettings=createRewardSettings(db),benefits=createBenefits(db),shopRegister=createShopRegistration(db),recovery=createRecovery(db);
+const assets={ '/payments.js':['payments.js','text/javascript'],'/payment-settings.js':['payment-settings.js','text/javascript'], '/admin/reward-points/settings':['index.html','text/html; charset=utf-8'], '/reward-settings.js':['reward-settings.js','text/javascript'], '/network-commissions.js':['network-commissions.js','text/javascript'], '/dispatch-commissions.js':['dispatch-commissions.js','text/javascript'], '/inventory-admin.js':['inventory-admin.js','text/javascript'],'/order-flow.js':['order-flow.js','text/javascript'],'/inventory-print.css':['inventory-print.css','text/css'],'/inventory-print.js':['inventory-print.js','text/javascript'], '/admin-access.js':['admin-access.js','text/javascript'],'/admin-users.js':['admin-users.js','text/javascript'],'/center-management.js':['center-management.js','text/javascript'], '/hero.js':['hero.js','text/javascript'], '/password-tools.js':['password-tools.js','text/javascript'],'/cms-tabs.js':['cms-tabs.js','text/javascript'],'/about.js':['about.js','text/javascript'],'/about-admin.js':['about-admin.js','text/javascript'], '/startup.js':['startup.js','text/javascript'], '/shop-checkout.js':['shop-checkout.js','text/javascript'],'/promotions-admin.js':['promotions-admin.js','text/javascript'], '/delivery.js':['delivery.js','text/javascript'], '/storefront.js':['storefront.js','text/javascript'],'/storefront-admin.js':['storefront-admin.js','text/javascript'],'/storefront.css':['storefront.css','text/css'], '/product-editor.js':['product-editor.js','text/javascript'],'/geography.js':['geography.js','text/javascript'],'/regions.js':['regions.js','text/javascript'],'/app.js':['app.js','text/javascript'],'/dashboard.js':['dashboard.js','text/javascript'],'/cms.js':['cms.js','text/javascript'],'/admin.css':['admin.css','text/css'],'/brand/logo.jpg':['brand/logo.jpg','image/jpeg'],'/style.css':['style.css','text/css'],'/import.js':['import.js','text/javascript'],'/admin/import':['import.html','text/html; charset=utf-8']};
 Object.assign(assets,{'/member-shop.js':['member-shop.js','text/javascript'],'/member-team-list.js':['member-team-list.js','text/javascript'],'/member-tree.js':['member-tree.js','text/javascript'],'/user/binary-tree':['member.html','text/html; charset=utf-8'],'/member-pages.js':['member-pages.js','text/javascript'],'/member-dashboard.js':['member-dashboard.js','text/javascript'],'/users.js':['users.js','text/javascript'],'/members.css':['members.css','text/css'],'/member.js':['member.js','text/javascript'],'/member':['member.html','text/html; charset=utf-8'],'/user/dashboard':['member.html','text/html; charset=utf-8'],'/user/login':['member.html','text/html; charset=utf-8']});
 for(const route of ['/user/left-tree','/user/right-tree','/user/registration','/user/marketplace/discount-panel','/user/marketplace/wholesale-panel','/user/shop/quick-order','/user/shop/products'])assets[route]=['member.html','text/html; charset=utf-8'];
 function json(res,status,data,headers={}) {res.writeHead(status,{'Content-Type':'application/json; charset=utf-8',...headers});res.end(JSON.stringify(data));}
@@ -43,40 +62,44 @@ async function body(req) {
   try{return JSON.parse(Buffer.concat(chunks).toString());}catch{fail('Invalid JSON');}
 }
 async function settings(){return {...contentDefaults,rewardRedemption:rewardsDefaults,storefront:storefrontDefaults,productCommissionDefaults:commissionDefaults,...(await db.query('SELECT data FROM settings WHERE id=1')).rows[0].data};}
-async function publicSettings(){const {productCommissionDefaults,storefront,...branding}=await settings();return branding;}
+async function publicSettings(){const {productCommissionDefaults,storefront,aboutPage:privateAbout,...branding}=await settings();return branding;}
 const server=http.createServer(async(req,res)=>{
   res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('X-Frame-Options','DENY');res.setHeader('Referrer-Policy','same-origin');
-  res.setHeader('Content-Security-Policy',"default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; frame-src https://www.youtube-nocookie.com https://www.google.com https://maps.google.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+  res.setHeader('Content-Security-Policy',"default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; frame-src https://www.youtube-nocookie.com https://www.google.com https://maps.google.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self' https://epay.esewa.com.np https://rc-epay.esewa.com.np");
   if(production)res.setHeader('Strict-Transport-Security','max-age=31536000');
   const url=new URL(req.url,'http://localhost'),path=url.pathname;
   try {
+    if((path.startsWith('/payment/return/')&&/^[a-f0-9-]{36}$/.test(path.slice(16)))){res.setHeader('Cache-Control','no-store');res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end(readFileSync(new URL('./public/payment-return.html',import.meta.url)));}
     if(path==='/health') {try{await db.query('SELECT 1');return json(res,200,{status:'ok',database:'postgresql'});}catch{return json(res,503,{status:'unavailable'});}}
     if(path.startsWith('/api/')) {
       res.setHeader('Cache-Control','no-store');
       if(!['GET','HEAD'].includes(req.method)) {
         if(req.headers.origin){let host;try{host=new URL(req.headers.origin).host;}catch{fail('Invalid origin',403);}if(host!==req.headers.host)fail('Cross-origin request denied',403);}
-        if(!req.headers['content-type']?.startsWith('application/json'))fail('JSON content type required',415);
+        if(path!=='/api/hero-video'&&!req.headers['content-type']?.startsWith('application/json'))fail('JSON content type required',415);
       }
+      if(path==='/api/payments/options'&&req.method==='GET')return json(res,200,await payments.options());
+      if(path==='/api/payments/verify'&&req.method==='POST')return json(res,200,await payments.verify((await body(req)).attemptId));
       if(path==='/api/member/forgot-password'&&req.method==='POST')return json(res,200,await recovery.request(await body(req),req.socket.remoteAddress));
       if(path==='/api/member/reset-password'&&req.method==='POST')return json(res,200,await recovery.reset(await body(req)));
       if(path==='/api/login'&&req.method==='POST') {
         const token=await auth.login(req.socket.remoteAddress,await body(req));
-        return json(res,200,{username},{'Set-Cookie':`session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${production?'; Secure':''}`});
+        return json(res,200,{username:(await auth.principal('session='+token)).username},{'Set-Cookie':`session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${production?'; Secure':''}`});
       }
       if(path==='/api/public'&&req.method==='GET') {
         const products=(await commerce.catalog('retail')).items.map(({dispatchCommission,rankCommissions,regionalCommissions,...p})=>p);
         return json(res,200,{settings:await publicSettings(),products});
       }
-      if(path==='/api/account-status'&&req.method==='GET'){try{await memberAuth.session(req.headers.cookie);return json(res,200,{authenticated:true});}catch(e){if(e.status!==401)throw e;return json(res,200,{authenticated:false});}}
+      if(path==='/api/account-status'&&req.method==='GET'){try{await auth.authenticate(req.headers.cookie);return json(res,200,{authenticated:true,dashboardUrl:'/admin/dashboard',role:'admin'});}catch(e){if(e.status!==401)throw e;}try{await memberAuth.session(req.headers.cookie);return json(res,200,{authenticated:true});}catch(e){if(e.status!==401)throw e;return json(res,200,{authenticated:false});}}
       if(path==='/api/branding'&&req.method==='GET'){const s=await settings();return json(res,200,{siteName:s.siteName,logoUrl:s.logoUrl});}
       if(path==='/api/geography'&&req.method==='GET')return json(res,200,geography);
-      if(path==='/api/storefront'&&req.method==='GET'){const [all,overview]=await Promise.all([settings(),storefront.overview()]);const {productCommissionDefaults,storefront:content,...branding}=all;return json(res,200,{settings:branding,content:publishedStorefront(content),...overview});}
+      if(path==='/api/storefront'&&req.method==='GET'){const [all,overview]=await Promise.all([settings(),storefront.overview()]);const {productCommissionDefaults,storefront:content,aboutPage:privateAbout,...branding}=all;return json(res,200,{settings:branding,content:publishedStorefront(content),about:publicAbout(all),...overview});}
       if(path==='/api/storefront/products'&&req.method==='GET')return json(res,200,await storefront.products(Object.fromEntries(url.searchParams)));
+      if((path.startsWith('/api/payments/orders/')&&/^[0-9]+$/.test(path.split('/')[4])&&['start','verify'].includes(path.split('/')[5])&&path.split('/').length===6)&&req.method==='POST'){const m=await memberAuth.session(req.headers.cookie);if(m.must_change_password||!m.permissions.includes('orders'))fail('Ordering is unavailable for this account',403);const parts=path.split('/');return json(res,200,await payments[parts[5]==='start'?'start':'verifyOrder'](m.user_id,Number(parts[4])));}
       if(path.startsWith('/api/cart/')){
         let member=null;try{member=await memberAuth.session(req.headers.cookie);}catch(e){if(e.status!==401)throw e;}
         if(path==='/api/cart/context'&&req.method==='GET'){
           const data=await commerce.catalog('retail'),info=member?await members.detail(member.user_id):null;
-          return json(res,200,{member:info?{id:Number(member.user_id),name:info.user.name,username:info.user.username,email:info.user.email,phone:info.user.phone,location:info.user.location,mustChangePassword:member.must_change_password,canOrder:member.permissions.includes('orders')}:null,centers:data.centers,products:data.items.map(({dispatchCommission,regionalCommissions,rankCommissions,...p})=>p),rewards:member?await benefits.account(member.user_id):{balance:0,items:[]},rewardSettings:(await settings()).rewardRedemption});
+          return json(res,200,{member:info?{id:Number(member.user_id),name:info.user.name,username:info.user.username,email:info.user.email,phone:info.user.phone,location:info.user.location,mustChangePassword:member.must_change_password,canOrder:member.permissions.includes('orders')}:null,paymentOptions:await payments.options(),centers:data.centers,products:data.items.map(({dispatchCommission,regionalCommissions,rankCommissions,...p})=>p),rewards:member?await benefits.account(member.user_id):{balance:0,items:[]},rewardSettings:(await settings()).rewardRedemption});
         }
         if(path==='/api/cart/register'&&req.method==='POST'){const result=await shopRegister(await body(req),req.socket.remoteAddress);return json(res,201,{ok:true,id:result.id,username:result.username},{'Set-Cookie':`member_session=${result.token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${production?'; Secure':''}`});}
         if(path==='/api/cart/quote'&&req.method==='POST'){const input=await body(req),quote=await commerce.quote({...input,channel:'retail',useBenefits:true},member?.user_id);return json(res,200,{...quote,items:quote.items.map(({commissionSettings,rewardSettings,...line})=>line)});}
@@ -114,7 +137,7 @@ const server=http.createServer(async(req,res)=>{
           fail('Method not allowed',405);
         }
         if(path==='/api/member/team-list'&&req.method==='GET'){if(!member.permissions.includes('profile'))fail('Network menu is not enabled',403);return json(res,200,await teamLists.list(member.user_id,url.searchParams.get('side'),Object.fromEntries(url.searchParams)));}
-        if(path==='/api/member/shop'&&req.method==='GET')return json(res,200,await commerce.catalog(url.searchParams.get('channel')||'retail'));
+        if(path==='/api/member/shop'&&req.method==='GET'){const catalog=await commerce.catalog(url.searchParams.get('channel')||'retail');return json(res,200,{...catalog,paymentOptions:await payments.options(),...(catalog.channel==='discount'?{rewards:await benefits.account(member.user_id)}:{})});}
         if(path==='/api/member/quote'&&req.method==='POST'){if(!member.permissions.includes('orders'))fail('Orders menu is not enabled',403);return json(res,200,await commerce.quote(await body(req),member.user_id));}
         if(path==='/api/member/checkout'&&req.method==='POST'){if(!member.permissions.includes('orders'))fail('Orders menu is not enabled',403);return json(res,201,await commerce.checkout(member.user_id,await body(req)));}
         if(path==='/api/member/order'&&req.method==='GET'){if(!member.permissions.includes('orders'))fail('Orders menu is not enabled',403);return json(res,200,await commerce.order(member.user_id,url.searchParams.get('id')));}
@@ -128,40 +151,97 @@ const server=http.createServer(async(req,res)=>{
         if(resource==='profile')return json(res,200,{user:{id:detail.user.id,name:detail.user.name,username:detail.user.username,email:detail.user.email,phone:detail.user.phone,status:detail.user.status,version:detail.user.version,location:detail.user.location},profile:{address:detail.profile.address,city:detail.profile.city,state:detail.profile.state,postalCode:detail.profile.postal_code,country:detail.profile.country,emailVerified:detail.profile.email_verified,mobileVerified:detail.profile.mobile_verified,kycStatus:detail.profile.kyc_status},rank:detail.rank,totals:detail.totals,localReferrals:detail.localReferrals,recordedMetrics:detail.user.recordedMetrics||null});
         fail('Not found',404);
       }
-      const token=await auth.authenticate(req.headers.cookie);
+      const actor=await permissionsFor(db,await auth.principal(req.headers.cookie)),token=actor.token;
+      if(actor.must_change_password&&!['/api/session','/api/logout','/api/admin-password'].includes(path))fail('Change your temporary administrator password before accessing this workspace',403);
+      if(path==='/api/admin-password'&&req.method==='POST')return json(res,200,await adminUsers.changePassword(actor,await body(req)),{'Set-Cookie':`session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${production?'; Secure':''}`});
+      if(req.headers['x-member-preview']==='true'&&!can(actor,'users.preview'))fail('Member panel preview is not enabled for your account',403);
+      const centerRoute=path.match(/^\/api\/center-management(?:\/(\d+)(?:\/(manager))?)?$/);
+      if(centerRoute){const [,id,action]=centerRoute;if(action==='manager'&&req.method==='POST')return json(res,200,await centerManagement.assign(actor,id,await body(req)));if(!id&&req.method==='GET')return json(res,200,await centerManagement.list(actor,Object.fromEntries(url.searchParams)));if((!id&&req.method==='POST')||(id&&!action&&req.method==='PUT'))return json(res,id?200:201,await centerManagement.save(actor,id,await body(req)));fail('Method not allowed',405);}
+      if(path.startsWith('/api/payment-verification/')&&req.method==='POST'){requirePermission(actor,'orders.manage');if(isCenterManager(actor))fail('Only central administration can verify gateway payments',403);const id=path.split('/').pop();if(!/^[0-9]+$/.test(id))fail('Invalid order');const row=(await db.query("SELECT data FROM records WHERE kind='orders' AND id=$1",[id])).rows[0];if(!row)fail('Order not found',404);return json(res,200,await payments.verifyOrder(row.data.userId,Number(id)));}
+      if(path==='/api/payment-settings'){if(req.method==='GET'){requirePermission(actor,'payment-settings.view','payment-settings.manage');return json(res,200,await payments.get());}if(req.method==='PUT'){requirePermission(actor,'payment-settings.manage');return json(res,200,await payments.save(await body(req),actor.username));}fail('Method not allowed',405);}
+      if(path==='/api/reward-settings'){if(req.method==='GET'){requirePermission(actor,'reward-settings.view','reward-settings.manage','benefits.manage');return json(res,200,await rewardSettings.get());}if(req.method==='PUT'){requirePermission(actor,'reward-settings.manage','benefits.manage');return json(res,200,await rewardSettings.save(await body(req),actor.username));}fail('Method not allowed',405);}
+      if(path==='/api/commission-settings'){if(req.method==='GET'){requirePermission(actor,'commission-settings.view','commission-settings.manage');return json(res,200,await networkCommissions.get());}if(req.method==='PUT'){requirePermission(actor,'commission-settings.manage');if(isCenterManager(actor))fail('Center managers cannot configure network commissions',403);return json(res,200,await networkCommissions.save(await body(req),actor.username));}fail('Method not allowed',405);}
+      if(path==='/api/commission-settings/calculate'&&req.method==='POST'){requirePermission(actor,'commission-settings.view','commission-settings.manage');return json(res,200,await networkCommissions.calculate(await body(req)));}
+      if(path==='/api/rank-rewards'&&req.method==='GET'){requirePermission(actor,'ranks.view','ranks.manage');return json(res,200,await rankRewards.preview(url.searchParams.get('user')));}
+      if(path==='/api/rank-rewards'&&req.method==='POST'){requirePermission(actor,'ranks.manage');return json(res,200,await rankRewards.award((await body(req)).user,actor.username));}
+      if(path.startsWith('/api/dispatch-commissions/')){
+        const root='/api/dispatch-commissions/';
+        if(path===root+'context'&&req.method==='GET')return json(res,200,await dispatchCommissions.context(actor,Object.fromEntries(url.searchParams)));
+        if(path===root+'settings'&&req.method==='PUT')return json(res,200,await dispatchCommissions.saveSettings(actor,await body(req)));
+        if(path===root+'profile'&&req.method==='PUT')return json(res,200,await dispatchCommissions.profile(actor,await body(req)));
+        if(path===root+'assets'&&req.method==='POST')return json(res,201,await dispatchCommissions.upload(actor,await body(req)));
+        const image=path.match(/^\/api\/dispatch-commissions\/assets\/([a-f0-9-]{36})$/);if(image&&req.method==='GET'){const asset=await dispatchCommissions.asset(actor,image[1]);res.writeHead(200,{'Content-Type':asset.mime_type,'Content-Length':asset.content.length});return res.end(asset.content);}
+        if([root+'ledger',root+'withdrawals'].includes(path)&&req.method==='GET')return json(res,200,await dispatchCommissions.list(actor,path.endsWith('ledger')?'ledger':'withdrawals',Object.fromEntries(url.searchParams)));
+        if(path===root+'withdrawals'&&req.method==='POST')return json(res,201,await dispatchCommissions.request(actor,await body(req)));
+        const withdrawal=path.match(/^\/api\/dispatch-commissions\/withdrawals\/(\d+)$/);if(withdrawal&&req.method==='PUT')return json(res,200,await dispatchCommissions.update(actor,withdrawal[1],await body(req)));
+        fail('Commission endpoint not found',404);
+      }
+      if(path.startsWith('/api/inventory/')){
+        if(path==='/api/inventory/context'&&req.method==='GET')return json(res,200,await inventory.context(actor,Object.fromEntries(url.searchParams)));
+        if(path==='/api/inventory/stocks'&&req.method==='GET')return json(res,200,await inventory.stocks(actor,Object.fromEntries(url.searchParams)));
+        if(path==='/api/inventory/movements'&&req.method==='GET')return json(res,200,await inventory.movements(actor,Object.fromEntries(url.searchParams)));
+        if(path==='/api/inventory/adjust'&&req.method==='POST')return json(res,200,await inventory.adjust(actor,await body(req)));
+        if(path==='/api/inventory/order-centers'&&req.method==='GET'){requirePermission(actor,'orders.view','orders.manage','orders.dispatch','inventory.dispatch');return json(res,200,(await db.query("SELECT id,data->>'name' AS name,data->>'location' AS location FROM records WHERE kind='centers' AND data->>'status'='Active' AND COALESCE(data->>'centerType','Dispatch Center')='Dispatch Center'"+(isCenterManager(actor)?' AND id=$1':'')+" ORDER BY data->>'name'",isCenterManager(actor)?[actor.centerId]:[])).rows.map(r=>({...r,id:Number(r.id)})));}
+        if(path==='/api/inventory/transfers'&&req.method==='GET')return json(res,200,await inventory.transfers(actor,Object.fromEntries(url.searchParams)));
+        if(path==='/api/inventory/transfers'&&req.method==='POST')return json(res,201,await inventory.send(actor,await body(req)));
+        const correction=path.match(/^\/api\/inventory\/transfers\/(\d+)\/edits(?:\/(\d+))?$/);if(correction){const [,transferId,editId]=correction;if(!editId&&req.method==='POST')return json(res,201,await transferCorrections.request(actor,transferId,await body(req)));if(editId&&req.method==='PUT')return json(res,200,await transferCorrections.review(actor,transferId,editId,await body(req)));fail('Method not allowed',405);}
+        const stockTransfer=path.match(/^\/api\/inventory\/transfers\/(\d+)(?:\/(receive|cancel|print))?$/);if(stockTransfer){const [,id,action]=stockTransfer;if(!action&&req.method==='GET')return json(res,200,await inventory.transfer(actor,id));if(['receive','cancel'].includes(action)&&req.method==='POST')return json(res,200,await inventory[action](actor,id,await body(req)));if(action==='print'&&req.method==='GET'){const html=transferPrint(await inventory.transfer(actor,id),await publicSettings(),url.searchParams.get('document')||'challan');res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end(html);}}
+        if(path==='/api/inventory/proofs'&&req.method==='POST')return json(res,201,await inventory.uploadProof(actor,await body(req)));
+        const stockProof=path.match(/^\/api\/inventory\/proofs\/([a-f0-9-]+)$/);if(stockProof&&req.method==='GET'){const p=await inventory.readProof(actor,stockProof[1]);res.writeHead(200,{'Content-Type':p.mime_type,'Content-Length':p.content.length,'Content-Disposition':"attachment; filename*=UTF-8''"+encodeURIComponent(p.name)});return res.end(p.content);}
+        if(path==='/api/inventory/orders/lookup'&&req.method==='POST')return json(res,200,await inventory.lookup(actor,await body(req)));
+        const stockOrder=path.match(/^\/api\/inventory\/orders\/(\d+)(?:\/(dispatch|assign|bill))?$/);if(stockOrder){const [,id,action]=stockOrder;if(!action&&req.method==='GET')return json(res,200,await inventory.flow(actor,id,url.searchParams.get('userId')));if(['dispatch','assign'].includes(action)&&req.method==='POST')return json(res,action==='dispatch'?201:200,await inventory[action](actor,id,await body(req)));if(action==='bill'&&req.method==='GET'){const html=orderBillPrint(await inventory.flow(actor,id,url.searchParams.get('userId')),await publicSettings());res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end(html);}}
+        const packing=path.match(/^\/api\/inventory\/dispatches\/(\d+)\/print$/);if(packing&&req.method==='GET'){const r=(await db.query('SELECT * FROM inventory_dispatches WHERE id=$1',[packing[1]])).rows[0];if(!r)fail('Dispatch not found',404);await inventory.flow(actor,r.order_id,url.searchParams.get('userId'));const lines=(await db.query('SELECT * FROM inventory_dispatch_lines WHERE dispatch_id=$1 ORDER BY product_id',[r.id])).rows;res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end(dispatchPrint(r,lines,await publicSettings()));}
+        fail('Inventory endpoint not found',404);
+      }
+      authorizeAdmin(actor,path,req.method);
+      const closedMember=path.match(/^\/api\/users\/(\d+)(?:\/(.*))?$/);if(closedMember&&req.method!=='GET'&&!(req.method==='DELETE'&&!closedMember[2])&&(await db.query("SELECT id FROM records WHERE id=$1 AND kind='users' AND data->>'deletedAt' IS NOT NULL",[closedMember[1]])).rowCount)fail('Deleted member is read-only',409);
+      if(path==='/api/admin-users'&&req.method==='GET')return json(res,200,await adminUsers.list(Object.fromEntries(url.searchParams)));
+      if(path==='/api/admin-users'&&req.method==='POST')return json(res,201,await adminUsers.save(null,await body(req),actor));
+      const adminUserRoute=path.match(/^\/api\/admin-users\/([^/]+)$/);if(adminUserRoute){const name=decodeURIComponent(adminUserRoute[1]);if(req.method==='PUT')return json(res,200,await adminUsers.save(name,await body(req),actor));if(req.method==='DELETE')return json(res,200,await adminUsers.remove(name,await body(req),actor));fail('Method not allowed',405);}
+      if(path==='/api/admin-roles'&&req.method==='GET')return json(res,200,await adminUsers.roles());
+      const adminRoleRoute=path.match(/^\/api\/admin-roles\/([^/]+)$/);if(adminRoleRoute&&req.method==='PUT')return json(res,200,await adminUsers.saveRole(decodeURIComponent(adminRoleRoute[1]),await body(req),actor));
       if(path==='/api/coupons'&&req.method==='GET')return json(res,200,await benefits.list());
       if(path==='/api/coupons'&&req.method==='POST')return json(res,201,await benefits.save(null,await body(req)));
       const couponRoute=path.match(/^\/api\/coupons\/(\d+)$/);if(couponRoute&&req.method==='PUT')return json(res,200,await benefits.save(couponRoute[1],await body(req)));
+      if(couponRoute&&req.method==='DELETE')return json(res,200,await benefits.remove(couponRoute[1],await body(req)));
+      const rewardEntryRoute=path.match(/^\/api\/users\/(\d+)\/rewards\/(\d+)$/);if(rewardEntryRoute&&['PUT','DELETE'].includes(req.method))return json(res,200,await benefits.revise(rewardEntryRoute[1],rewardEntryRoute[2],await body(req),req.method==='DELETE'));
       if(path==='/api/categories'&&req.method==='GET')return json(res,200,await categories.list());
       if(path==='/api/categories'&&req.method==='POST')return json(res,201,await categories.create(await body(req)));
       const categoryImage=path.match(/^\/api\/categories\/(\d+)$/);if(categoryImage&&req.method==='PUT')return json(res,200,await categories.updateImage(categoryImage[1],await body(req)));
       if(path==='/api/coordinators'&&req.method==='GET')return json(res,200,await regions.all());
+      const deleteProduct=path.match(/^\/api\/products\/(\d+)$/);if(deleteProduct&&req.method==='DELETE')return json(res,200,await repository.removeProduct(deleteProduct[1],await body(req),actor));
       const visibilityRoute=path.match(/^\/api\/products\/(\d+)\/visibility$/);if(visibilityRoute&&req.method==='POST')return json(res,200,await repository.visibility(visibilityRoute[1],await body(req)));
       if(path==='/api/users/lookup'&&req.method==='GET')return json(res,200,await members.lookup(url.searchParams.get('q')||''));
       const userRoute=path.match(/^\/api\/users\/(\d+)(?:\/([a-z]+))?$/);
-      if(userRoute){const [,id,action]=userRoute;
+      if(userRoute){const [,id,action]=userRoute;if(!['GET','DELETE'].includes(req.method)&&(await db.query("SELECT id FROM records WHERE id=$1 AND kind='users' AND data->>'deletedAt' IS NOT NULL",[id])).rowCount)fail('Deleted member is read-only',409);
         if(action==='rewards'&&req.method==='GET')return json(res,200,await benefits.account(id));
-        if(action==='rewards'&&req.method==='POST')return json(res,200,await benefits.adjust(id,await body(req)));
+        if(action==='rewards'&&req.method==='POST')return json(res,200,await benefits.adjust(id,await body(req),actor.username));
         if(action==='trackorder'&&req.method==='GET')return json(res,200,await commerce.track(id,url.searchParams.get('reference')));
         if(action==='regions'&&req.method==='GET')return json(res,200,await regions.report(id,Object.fromEntries(url.searchParams)));
         if(action==='coordinators'&&req.method==='GET')return json(res,200,await regions.assignments(id));
         if(action==='coordinators'&&req.method==='POST')return json(res,201,await regions.assign(id,await body(req)));
         if(action==='unassign'&&req.method==='POST')return json(res,200,await regions.remove(id,await body(req)));
+        if(!action&&req.method==='DELETE')return json(res,200,await members.remove(id,await body(req),actor));
+        if(action==='earnings'&&req.method==='GET')return json(res,200,await memberEarnings.get(id,Object.fromEntries(url.searchParams)));
         if(!action&&req.method==='GET')return json(res,200,await members.detail(id));
         if(!action&&req.method==='PUT')return json(res,200,await members.update(id,await body(req)));
         if(action==='teamlist'&&req.method==='GET')return json(res,200,await teamLists.list(id,url.searchParams.get('side'),Object.fromEntries(url.searchParams)));
-        if(action==='shop'&&req.method==='GET')return json(res,200,await commerce.catalog(url.searchParams.get('channel')||'retail'));
+        if(action==='shop'&&req.method==='GET'){const catalog=await commerce.catalog(url.searchParams.get('channel')||'retail');return json(res,200,{...catalog,...(catalog.channel==='discount'?{rewards:await benefits.account(id)}:{})});}
         if(action==='order'&&req.method==='GET')return json(res,200,await commerce.order(id,url.searchParams.get('id')));
         if(action==='tree'&&req.method==='GET')return json(res,200,await binaryTree.tree(id,url.searchParams.get('username')||'',url.searchParams.get('q')||''));
         if(action==='network'&&req.method==='GET')return json(res,200,await members.network(id));
         if(['orders','deposits','withdrawals'].includes(action)&&req.method==='GET')return json(res,200,await members.related(id,action,url.searchParams.get('page')||1));
-        if(action&&req.method==='POST')return json(res,200,await members.action(id,action,await body(req),username));
+        if(action&&req.method==='POST')return json(res,200,await members.action(id,action,await body(req),actor.username));
         fail('Method not allowed',405);
       }
-      if(path==='/api/session'&&req.method==='GET')return json(res,200,{username,schemas});
-      if(path==='/api/dashboard'&&req.method==='GET')return json(res,200,await repository.dashboard());
+      if(path==='/api/session'&&req.method==='GET')return json(res,200,{username:actor.username,name:actor.name,role:actor.role,centerId:actor.centerId,isOwner:actor.isOwner,mustChangePassword:actor.must_change_password,permissions:actor.permissions,deniedPermissions:actor.permission_overrides?.deny||[],schemas});
+      if(path==='/api/dashboard'&&req.method==='GET'){if(actor.role==='Admin')return json(res,200,await repository.dashboard());const cards=[];for(const [key,title] of [['users','Members'],['products','Products'],['orders','Orders'],['tasks','Service tasks'],['leads','CRM leads'],['tickets','Support tickets']])if(can(actor,key+'.view')||can(actor,key+'.manage')){const result=await repository.list(key,{page:1,limit:1},centerScope(actor));cards.push({key,title,count:result.total});}const center=actor.centerId?(await db.query("SELECT data->>'name' AS name FROM records WHERE id=$1 AND kind='centers'",[actor.centerId])).rows[0]?.name:null;return json(res,200,{restricted:true,name:actor.name||actor.username,role:actor.role,center,cards});}
       if(path==='/api/logout'&&req.method==='POST') {
         await db.query('DELETE FROM sessions WHERE token=$1',[token]);return json(res,200,{ok:true},{'Set-Cookie':`session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${production?'; Secure':''}`});
+      }
+      if(path==='/api/about-page'){
+        if(req.method==='GET'){const page=aboutPage(await settings());return json(res,200,{page,version:aboutVersion(page)});}
+        if(!['POST','PUT','DELETE'].includes(req.method))fail('Method not allowed',405);const input=await body(req);return json(res,200,await db.transaction(async c=>{const old=(await c.query('SELECT data FROM settings WHERE id=1 FOR UPDATE')).rows[0].data,page=aboutPage(old);if(input.version!==aboutVersion(page))fail('About page changed. Reload before saving.',409);if(req.method==='POST'&&page)fail('About page already exists',409);if(req.method!=='POST'&&!page)fail('About page not found',404);const next=req.method==='DELETE'?null:await validateAbout(c,input);await c.query('UPDATE settings SET data=$1 WHERE id=1',[{...old,aboutPage:next}]);await c.query("INSERT INTO audit(action,kind) VALUES($1,'settings')",['About page '+req.method]);return {page:next,version:aboutVersion(next)};}));
       }
       if(path==='/api/email-settings'){if(req.method==='GET')return json(res,200,await recovery.settings());if(req.method==='PUT')return json(res,200,await recovery.save(await body(req)));}
       if(path==='/api/blog-posts'||path.startsWith('/api/blog-posts/')){
@@ -169,18 +249,19 @@ const server=http.createServer(async(req,res)=>{
         const input=await body(req);const saved=await db.transaction(async c=>{const old=(await c.query('SELECT data FROM settings WHERE id=1 FOR UPDATE')).rows[0].data,content={...storefrontDefaults,...old.storefront},posts=[...content.posts],slug=decodeURIComponent(path.slice('/api/blog-posts/'.length)),index=posts.findIndex(p=>p.slug===slug);if(req.method==='POST'&&path==='/api/blog-posts'){if(posts.some(p=>p.slug===input.slug))fail('This blog URL already exists',409);posts.push(input);}else if(['PUT','DELETE'].includes(req.method)&&index>=0){if(input.version!==createHash('sha256').update(JSON.stringify(posts[index])).digest('hex'))fail('This article changed. Reload before editing.',409);if(req.method==='DELETE')posts.splice(index,1);else posts[index]=input;}else fail('Article not found',404);const next=await validateStorefront(c,{...content,posts});await c.query('UPDATE settings SET data=$1 WHERE id=1',[{...old,storefront:next}]);await c.query("INSERT INTO audit(action,kind,details) VALUES($1,'settings',$2)",['Blog '+req.method,{slug:input.slug||slug}]);return {ok:true};});return json(res,200,saved);
       }
       if(path==='/api/settings') {
-        if(req.method==='GET')return json(res,200,await settings());
+        if(req.method==='GET'){const value=await settings();return json(res,200,can(actor,'settings.view')||can(actor,'settings.manage')?value:{...await publicSettings(),productCommissionDefaults:can(actor,'products.manage')?value.productCommissionDefaults:undefined});}
         if(req.method==='PUT') {
-          const input=await body(req),result=await db.transaction(async c=>{
+          const input=await body(req);if(!can(actor,'settings.manage')&&(!can(actor,'benefits.manage')||Object.keys(input).some(k=>k!=='rewardRedemption')))fail('Your role cannot change website settings',403);if(input.rewardRedemption!==undefined&&!can(actor,'benefits.manage'))fail('Reward settings access is not enabled',403);const result=await db.transaction(async c=>{
             const current=(await c.query('SELECT data FROM settings WHERE id=1 FOR UPDATE')).rows[0].data,result=validateContent(input,current);
             if(input.productCommissionDefaults!==undefined)result.productCommissionDefaults=await commissions(c,input.productCommissionDefaults);
             if(input.storefront!==undefined)result.storefront=await validateStorefront(c,{...storefrontDefaults,...current.storefront,...input.storefront});
-            if(input.rewardRedemption!==undefined)result.rewardRedemption=validateRewards(input.rewardRedemption);
+            if(input.rewardRedemption!==undefined){result.rewardRedemption=validateRewards(input.rewardRedemption,current.rewardRedemption);await validateRewardCategories(c,result.rewardRedemption);}
             if(result.logoUrl.startsWith('/assets/')&&!(await c.query('SELECT id FROM media_assets WHERE id=$1',[result.logoUrl.split('/').pop()])).rowCount)fail('Uploaded logo was not found');
             await c.query('UPDATE settings SET data=$1 WHERE id=1',[result]);await c.query("INSERT INTO audit(action,kind,details) VALUES('Updated settings','settings',$1)",[{fields:Object.keys(input)}]);return result;
-          });return json(res,200,result);
+          });return json(res,200,can(actor,'settings.manage')?result:{rewardRedemption:result.rewardRedemption});
         }
       }
+      if(path==='/api/hero-video'&&req.method==='POST'){const {mime,content}=await readHeroVideo(req),id=randomUUID();await db.query('INSERT INTO hero_video_assets(id,name,mime_type,content) VALUES($1,$2,$3,$4)',[id,'Homepage hero video',mime,content]);return json(res,201,{url:'/videos/'+id});}
       if(path==='/api/media'&&req.method==='POST') {
         const input=await body(req),image=decodeImage(input),id=randomUUID();
         await db.query('INSERT INTO media_assets(id,name,mime_type,content) VALUES($1,$2,$3,$4)',[id,basename(String(input.name||'logo')).slice(0,200),image.mime,image.content]);
@@ -196,14 +277,15 @@ const server=http.createServer(async(req,res)=>{
       const match=path.match(/^\/api\/records\/([a-z]+)(?:\/(\d+))?$/);
       if(match) {
         const [,kind,id]=match;if(!schemas[kind])fail('Unknown module',404);
-        if(req.method==='GET')return json(res,200,await repository.list(kind,Object.fromEntries(url.searchParams)));
+        if(req.method==='GET')return json(res,200,await repository.list(kind,Object.fromEntries(url.searchParams),centerScope(actor)));
         if(!['POST','PUT'].includes(req.method))fail('Method not allowed',405);
         if((req.method==='PUT'&&!id)||(req.method==='POST'&&id))fail('Invalid record URL');
-        const saved=await repository.save(kind,id,await body(req));return json(res,id?200:201,saved);
+        const input=await body(req);const saved=kind==='centers'?await centerManagement.save(actor,id,input):await repository.save(kind,id,input,{...centerScope(actor),actor:actor.username,dispatchOnly:kind==='orders'&&!can(actor,'orders.manage')});return json(res,id?200:201,saved);
       }
       fail('Endpoint not found',404);
     }
     if(!['GET','HEAD'].includes(req.method))fail('Method not allowed',405);
+    if(/^\/videos\/[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(path)){const id=path.slice(8),meta=(await db.query('SELECT mime_type,octet_length(content) AS size FROM hero_video_assets WHERE id=$1',[id])).rows[0];if(!meta)fail('Video not found',404);const range=videoRange(req.headers.range,meta.size),headers={'Content-Type':meta.mime_type,'Accept-Ranges':'bytes','Cache-Control':'public,max-age=86400'};if(!range){res.writeHead(416,{...headers,'Content-Range':'bytes */'+meta.size});return res.end();}headers['Content-Length']=range.end-range.start+1;if(range.status===206)headers['Content-Range']='bytes '+range.start+'-'+range.end+'/'+meta.size;const content=req.method==='HEAD'?undefined:(await db.query('SELECT substring(content FROM $2 FOR $3) AS part FROM hero_video_assets WHERE id=$1',[id,range.start+1,range.end-range.start+1])).rows[0].part;res.writeHead(range.status,headers);return res.end(content);}
     if(/^\/assets\/[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(path)) {
       const asset=(await db.query('SELECT mime_type,content FROM media_assets WHERE id=$1',[path.split('/').pop()])).rows[0];
       if(!asset)fail('Image not found',404);res.writeHead(200,{'Content-Type':asset.mime_type,'Cache-Control':'public,max-age=86400'});return res.end(req.method==='HEAD'?undefined:asset.content);
@@ -213,10 +295,10 @@ const server=http.createServer(async(req,res)=>{
       const mime=content[0]===0x89?'image/png':content.toString('ascii',0,3)==='GIF'?'image/gif':content.toString('ascii',8,12)==='WEBP'?'image/webp':'image/jpeg';
       res.writeHead(200,{'Content-Type':mime,'Cache-Control':'public,max-age=86400'});return res.end(req.method==='HEAD'?undefined:content);
     }
-    const asset=assets[path];if(!asset&&!/^\/(?:cart|checkout|blog(?:\/[a-z0-9-]+)?|franchise|contact|testimonials|track-order)$/.test(path)&&path!=='/'&&!/^\/admin(?:\/[a-z-]+)?$/.test(path)&&!/^\/admin\/users\/detail\/\d+$/.test(path))fail('Page not found',404);
+    const asset=assets[path];if(!asset&&!/^\/(?:about|cart|checkout|blog(?:\/[a-z0-9-]+)?|franchise|contact|testimonials|track-order)$/.test(path)&&path!=='/'&&!/^\/admin(?:\/[a-z-]+)?$/.test(path)&&!/^\/admin\/users\/detail\/\d+$/.test(path))fail('Page not found',404);
     let content=readFileSync(new URL(`./public/${asset?asset[0]:'index.html'}`,import.meta.url));
     const html=!asset||asset[1].startsWith('text/html');
-    if(html){let markup=content.toString();if(!path.startsWith('/admin')&&!asset){for(const file of ['promotions-admin','storefront-admin','regions','cms','cms-tabs','users'])markup=markup.replace(`<script src="/${file}.js" defer></script>`,'');const title={'/':'Dynamic Life Success','/cart':'Your shopping cart','/checkout':'Your shopping cart','/blog':'Our journal','/franchise':'Become a Franchise Partner','/contact':'Contact us','/testimonials':'Testimonials','/track-order':'Track your order'}[path]||'Dynamic Life Success';markup=markup.replace('<h1>Dynamic Life Success</h1>','<h1>'+title+'</h1>');}markup=markup.replace(/(src|href)="(\/[a-z0-9-]+\.(?:js|css))"/g,(all,attr,url)=>{const item=assets[url];if(!item)return all;const hash=createHash('sha256').update(readFileSync(new URL('./public/'+item[0],import.meta.url))).digest('hex').slice(0,12);return attr+'="'+url+'?v='+hash+'"';});content=Buffer.from(markup);}
+    if(html){let markup=content.toString();if(path.startsWith('/admin')||asset?.[0]==='member.html')markup=panelShell(markup,path,asset?.[0]==='member.html');if(!path.startsWith('/admin')&&!asset){for(const file of ['promotions-admin','storefront-admin','regions','cms','cms-tabs','about-admin','users','admin-access','admin-users','center-management','inventory-admin','order-flow','dispatch-commissions','network-commissions','reward-settings','payment-settings'])markup=markup.replace(`<script src="/${file}.js" defer></script>`,'');const title={'/':'Dynamic Life Success','/cart':'Your shopping cart','/checkout':'Your shopping cart','/blog':'Our journal','/franchise':'Become a Franchise Partner','/about':'About Dynamic Life Success','/contact':'Contact us','/testimonials':'Testimonials','/track-order':'Track your order'}[path]||'Dynamic Life Success';markup=markup.replace('<h1>Dynamic Life Success</h1>','<h1>'+title+'</h1>');}markup=markup.replace(/(src|href)="(\/[a-z0-9-]+\.(?:js|css))"/g,(all,attr,url)=>{const item=assets[url];if(!item)return all;const hash=createHash('sha256').update(readFileSync(new URL('./public/'+item[0],import.meta.url))).digest('hex').slice(0,12);return attr+'="'+url+'?v='+hash+'"';});content=Buffer.from(markup);}
     const etag='"'+createHash('sha256').update(content).digest('hex').slice(0,24)+'"';
     const headers={'Content-Type':asset?asset[1]:'text/html; charset=utf-8','Cache-Control':html?'no-cache':url.searchParams.has('v')?'public,max-age=31536000,immutable':'no-cache','ETag':etag,'Vary':'Accept-Encoding'};
     if(req.headers['if-none-match']===etag){res.writeHead(304,headers);return res.end();}

@@ -1,0 +1,88 @@
+import {test,before,after} from 'node:test';
+import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
+import {randomBytes} from 'node:crypto';
+import {createDatabase} from '../src/database.mjs';
+const name='dls_admin_roles_'+randomBytes(6).toString('hex'),base='http://localhost:3212',password='AdminRoleFixture2026!';let parent,db,child,owner,dispatchA,dispatchB,serviceA,serviceB,product,orderA,orderB,taskA,taskB,staff,personal,dispatch,service;
+async function req(path,method='GET',data,cookie=owner,extra={}){return fetch(base+path,{method,headers:{...(cookie?{Cookie:cookie}:{}),...(data===undefined?{}:{'Content-Type':'application/json'}),...extra},body:data===undefined?undefined:JSON.stringify(data)});}
+async function ok(r,status=200){assert.equal(r.status,status,await r.clone().text());return r.json();}
+async function login(username,pass='six123'){const r=await req('/api/login','POST',{username,password:pass},null);await ok(r);return r.headers.get('set-cookie').split(';')[0];}
+const create=(kind,data)=>req('/api/records/'+kind,'POST',data).then(r=>ok(r,201));
+const account=(username,role,centerId=null,permissionOverrides={allow:[],deny:[]})=>req('/api/admin-users','POST',{username,name:username+' Fixture',email:username+'@example.test',password:'six123',role,status:'Active',centerId,permissionOverrides}).then(r=>ok(r,201));
+const find=async username=>(await ok(await req('/api/admin-users?q='+encodeURIComponent(username)))).items.find(r=>r.username===username);
+before(async()=>{parent=createDatabase(process.env.TEST_DATABASE_URL||process.env.DATABASE_URL);await parent.query('CREATE DATABASE '+name);const u=new URL(process.env.TEST_DATABASE_URL||process.env.DATABASE_URL);u.pathname='/'+name;db=createDatabase(u.toString());child=spawn(process.execPath,['server.mjs'],{env:{...process.env,DATABASE_URL:u.toString(),PORT:'3212',ADMIN_PASSWORD:password,NODE_ENV:'test'},stdio:['ignore','pipe','pipe']});child.stderr.on('data',()=>{});await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Admin role server timeout')),45000);child.stdout.on('data',c=>{if(String(c).includes('http://localhost')){clearTimeout(timer);resolve();}});child.on('exit',code=>{clearTimeout(timer);reject(Error('Admin role server exited '+code));});});owner=await login('admin',password);
+ dispatchA=await create('centers',{name:'Dispatch A',code:'DA01',centerType:'Dispatch Center',location:'A',status:'Active'});dispatchB=await create('centers',{name:'Dispatch B',code:'DB01',centerType:'Dispatch Center',location:'B',status:'Active'});serviceA=await create('centers',{name:'Service A',centerType:'Service Center',location:'SA',status:'Active'});serviceB=await create('centers',{name:'Service B',centerType:'Service Center',location:'SB',status:'Active'});
+ product=await create('products',{name:'Role product',category:'Fixture',price:100,bv:0,stock:20,status:'Active'});
+ orderA=await create('orders',{customer:'Customer A',productId:product.id,quantity:1,amount:1,status:'Pending',dispatchCenterId:dispatchA.id});orderB=await create('orders',{customer:'Customer B',productId:product.id,quantity:1,amount:1,status:'Pending',dispatchCenterId:dispatchB.id});
+ taskA=await create('tasks',{name:'Service task A',assignedTo:'Service team A',centerId:serviceA.id,status:'Pending'});taskB=await create('tasks',{name:'Service task B',assignedTo:'Service team B',centerId:serviceB.id,status:'Pending'});
+ staff=await account('staff_fixture','Admin Staff');personal=await account('personal_fixture','Admin Staff',null,{allow:['users.view','settings.view'],deny:['users.manage']});dispatch=await account('dispatch_fixture','Dispatch Center Manager',dispatchA.id);service=await account('service_fixture','Service Center Manager',serviceA.id);
+});
+after(async()=>{child?.kill();if(child&&child.exitCode===null)await new Promise(r=>child.once('exit',r));await db?.close();await parent?.query('DROP DATABASE IF EXISTS '+name+' WITH (FORCE)');await parent?.close();});
+test('admin accounts use salted hashes, role validation and protected primary ownership',async()=>{
+ assert.equal((await req('/api/admin-users','GET',undefined,null)).status,401);const list=await ok(await req('/api/admin-users'));assert.ok(list.items.some(a=>a.username==='admin'&&a.isOwner));for(const row of list.items){assert.equal(row.salt,undefined);assert.equal(row.password_hash,undefined);assert.equal(row.credential_version,undefined);}
+ const hashes=(await db.query("SELECT salt,password_hash FROM administrators WHERE username IN ('staff_fixture','personal_fixture') ORDER BY username")).rows;assert.notEqual(hashes[0].salt,hashes[1].salt);assert.notEqual(hashes[0].password_hash,hashes[1].password_hash);
+ assert.equal((await req('/api/admin-users','POST',{...staff,username:'STAFF_FIXTURE',password:'six123',permissionOverrides:{allow:[],deny:[]}})).status,409);
+ assert.equal((await req('/api/admin-users','POST',{username:'bad_role',name:'Invalid',email:'',role:'Super Admin',password:'six123',status:'Active'})).status,400);
+ assert.equal((await req('/api/admin-users','POST',{username:'bad_center',name:'Invalid',email:'',role:'Dispatch Center Manager',centerId:serviceA.id,password:'six123',status:'Active'})).status,400);
+ const root=list.items.find(a=>a.isOwner);assert.equal((await req('/api/admin-users/admin','DELETE',{version:root.version})).status,400);assert.equal((await req('/api/admin-users/admin','PUT',{...root,role:'Admin Staff',permissionOverrides:{allow:[],deny:[]}})).status,400);
+ assert.equal((await req('/api/admin-users','POST',{},owner,{Origin:'https://outside.example'})).status,403);
+});
+test('role permissions and personal overrides are enforced on private endpoints',async()=>{
+ const cookie=await login(staff.username),pc=await login(personal.username);const session=await ok(await req('/api/session','GET',undefined,pc));assert.equal(session.role,'Admin Staff');assert.ok(session.permissions.includes('settings.view'));assert.ok(!session.permissions.includes('users.manage'));
+ for(const path of ['/api/admin-users','/api/admin-roles','/api/archive','/api/records/deposits'])assert.equal((await req(path,'GET',undefined,cookie)).status,403,path);
+ assert.equal((await req('/api/settings','PUT',{siteName:'Blocked'},cookie)).status,403);assert.equal((await req('/api/records/users','POST',{name:'Blocked',email:'blocked@example.test',status:'Active'},pc)).status,403);assert.equal((await req('/api/records/users','GET',undefined,pc)).status,200);assert.equal((await req('/api/settings','GET',undefined,pc)).status,200);
+ assert.equal((await req('/api/users/1/balance','POST',{direction:'Credit',amount:1},cookie)).status,403);assert.equal((await req('/api/users/1/password','POST',{password:'six123'},cookie)).status,403);
+ const roles=await ok(await req('/api/admin-roles')),role=roles.items.find(r=>r.role==='Admin Staff');await ok(await req('/api/admin-roles/'+encodeURIComponent(role.role),'PUT',{version:role.version,permissions:role.permissions.filter(p=>p!=='users.view'&&p!=='users.manage')}));assert.equal((await req('/api/session','GET',undefined,cookie)).status,401);
+ const again=await login(staff.username),personalAgain=await login(personal.username);assert.equal((await req('/api/records/users','GET',undefined,again)).status,403);assert.equal((await req('/api/records/users','GET',undefined,personalAgain)).status,200);
+ assert.equal((await req('/api/admin-roles/'+encodeURIComponent(role.role),'PUT',{version:role.version,permissions:[]})).status,409);
+});
+test('dispatch managers see their center only and cannot change payment or another center order',async()=>{
+ const c=await login(dispatch.username),session=await ok(await req('/api/session','GET',undefined,c));assert.equal(session.centerId,dispatchA.id);const list=await ok(await req('/api/records/orders?page=1&limit=15','GET',undefined,c));assert.deepEqual(list.items.map(o=>o.id),[orderA.id]);assert.equal(list.total,1);const dash=await ok(await req('/api/dashboard','GET',undefined,c));assert.equal(dash.restricted,true);assert.equal(dash.cards.find(c=>c.key==='orders').count,1);assert.equal(dash.approvedDeposits,undefined);
+ assert.equal((await req('/api/records/users','GET',undefined,c)).status,403);assert.equal((await req('/api/records/orders','POST',orderA,c)).status,403);assert.equal((await req('/api/records/orders/'+orderA.id,'PUT',{version:orderA.version,paymentStatus:'Paid'},c)).status,403);assert.equal((await req('/api/records/orders/'+orderB.id,'PUT',{version:orderB.version,status:'Dispatched'},c)).status,403);
+ const saved=await ok(await req('/api/records/orders/'+orderA.id,'PUT',{version:orderA.version,status:'Dispatched',courier:'Fixture courier',trackingNumber:'TRACK1'},c));assert.equal(saved.status,'Dispatched');assert.notEqual(saved.paymentStatus,'Paid');assert.equal(saved.amount,orderA.amount);
+ assert.equal((await req('/api/records/orders/'+orderA.id,'PUT',{version:orderA.version,status:'Delivered'},c)).status,409);
+ assert.equal((await req('/api/users/1','GET',undefined,c,{'X-Member-Preview':'true'})).status,403);
+});
+test('service managers create and update only tasks in their assigned service center',async()=>{
+ const c=await login(service.username),list=await ok(await req('/api/records/tasks','GET',undefined,c));assert.deepEqual(list.map(t=>t.id),[taskA.id]);const added=await ok(await req('/api/records/tasks','POST',{name:'Manager own task',assignedTo:'Team',status:'Pending'},c),201);assert.equal(added.centerId,serviceA.id);
+ assert.equal((await req('/api/records/tasks','POST',{name:'Wrong center',assignedTo:'Team',centerId:serviceB.id,status:'Pending'},c)).status,403);assert.equal((await req('/api/records/tasks/'+taskB.id,'PUT',{...taskB,status:'Completed'},c)).status,403);assert.equal((await req('/api/records/tasks/'+taskA.id,'PUT',{...taskA,centerId:serviceB.id},c)).status,403);
+ const done=await ok(await req('/api/records/tasks/'+taskA.id,'PUT',{...taskA,status:'Completed'},c));assert.equal(done.status,'Completed');
+ const centers=await ok(await req('/api/center-management?centerType=Service%20Center','GET',undefined,c));assert.deepEqual(centers.items.map(c=>c.id),[serviceA.id]);assert.equal(centers.items[0].taskCount,2);assert.equal((await req('/api/center-management','POST',{name:'Blocked',location:'x',centerType:'Service Center',status:'Active'},c)).status,403);
+ assert.equal((await req('/api/records/orders','GET',undefined,c)).status,403);
+});
+test('center creation, correct manager assignment and session revocation work together',async()=>{
+ const center=await ok(await req('/api/center-management','POST',{name:'Dispatch API',location:'Fixture',code:'dispatch_api',centerType:'Dispatch Center',status:'Active'}),201);assert.equal(center.code,'DISPATCH_API');assert.equal((await req('/api/center-management','POST',{name:'Duplicate',location:'Fixture',code:'DISPATCH_API',centerType:'Dispatch Center',status:'Active'})).status,409);
+ const catalog=await ok(await req('/api/cart/context','GET',undefined,null));assert.ok(catalog.centers.some(c=>c.id===center.id));assert.ok(!catalog.centers.some(c=>c.id===serviceA.id));
+ const old=await login(dispatch.username),manager=await find(dispatch.username);await ok(await req('/api/center-management/'+dispatchB.id+'/manager','POST',{username:manager.username,version:manager.version}));assert.equal((await req('/api/session','GET',undefined,old)).status,401);const fresh=await login(dispatch.username);assert.deepEqual((await ok(await req('/api/records/orders','GET',undefined,fresh))).map(o=>o.id),[orderB.id]);
+ assert.equal((await req('/api/center-management/'+dispatchA.id+'/manager','POST',{username:service.username,version:service.version})).status,400);
+ const current=await find(dispatch.username);await ok(await req('/api/admin-users/'+dispatch.username,'PUT',{...current,status:'Inactive',permissionOverrides:current.permission_overrides,password:''}));assert.equal((await req('/api/session','GET',undefined,fresh)).status,401);assert.equal((await req('/api/login','POST',{username:dispatch.username,password:'six123'},null)).status,401);
+});
+test('permission validation prevents unknown capabilities and administrator privilege escalation',async()=>{
+ const c=await login(personal.username);assert.equal((await req('/api/admin-users/'+personal.username,'PUT',{...personal,role:'Admin'},c)).status,403);const roles=await ok(await req('/api/admin-roles')),r=roles.items[0];assert.equal((await req('/api/admin-roles/'+encodeURIComponent(r.role),'PUT',{version:r.version,permissions:['admins.manage']})).status,400);
+ const fresh=await account('deletable_fixture','Admin Staff'),cookie=await login(fresh.username);await ok(await req('/api/admin-users/'+fresh.username,'DELETE',{version:fresh.version}));assert.equal((await req('/api/session','GET',undefined,cookie)).status,401);assert.ok(!(await ok(await req('/api/admin-users'))).items.some(r=>r.username===fresh.username));
+ for(const path of ['/admin/manage-admins','/admin/dispatch-center','/admin/service-centers','/admin-users.js','/center-management.js'])assert.equal((await req(path,'GET',undefined,null)).status,200);
+});
+
+test('coupon-only and CMS permissions cannot bypass one another through settings',async()=>{
+ const a=await account('benefits_fixture','Admin Staff',null,{allow:['benefits.manage'],deny:[]}),c=await login(a.username);
+ assert.equal((await req('/api/coupons','GET',undefined,c)).status,200);assert.equal((await req('/api/settings','GET',undefined,c)).status,200);
+ assert.equal((await req('/api/settings','PUT',{siteName:'Blocked brand overwrite'},c)).status,403);
+ const r=await ok(await req('/api/settings','PUT',{rewardRedemption:{enabled:true,pointValue:2}},c));assert.deepEqual(Object.keys(r),['rewardRedemption']);
+ const b=await account('cms_fixture','Admin Staff',null,{allow:['settings.view','settings.manage'],deny:[]}),bc=await login(b.username);assert.equal((await req('/api/settings','PUT',{rewardRedemption:{enabled:true,pointValue:5}},bc)).status,403);
+ assert.equal((await req('/api/blog-posts','GET',undefined,bc)).status,200);assert.equal((await req('/api/records/affiliates','GET',undefined,bc)).status,200);
+});
+
+test('temporary imported admin passwords gate the workspace and can be changed without extra role permissions',async()=>{
+ await db.query('UPDATE administrators SET must_change_password=true WHERE username=$1',[staff.username]);const c=await login(staff.username);assert.equal((await ok(await req('/api/session','GET',undefined,c))).mustChangePassword,true);assert.equal((await req('/api/records/products','GET',undefined,c)).status,403);
+ assert.equal((await req('/api/admin-password','POST',{currentPassword:'wrong',password:'PersonalFixture6!',confirmation:'PersonalFixture6!'},c)).status,400);
+ await ok(await req('/api/admin-password','POST',{currentPassword:'six123',password:'PersonalFixture6!',confirmation:'PersonalFixture6!'},c));assert.equal((await req('/api/session','GET',undefined,c)).status,401);
+ assert.equal((await req('/api/login','POST',{username:staff.username,password:'six123'},null)).status,401);const fresh=await login(staff.username,'PersonalFixture6!');assert.equal((await ok(await req('/api/session','GET',undefined,fresh))).mustChangePassword,false);
+ assert.equal((await req('/api/admin-password','POST',{currentPassword:password,password:'AnotherOwnerFixture!',confirmation:'AnotherOwnerFixture!'})).status,400);
+});
+
+test('network commission settings require their own menu and management permissions',async()=>{
+ await account('commission_no_access_staff','Admin Staff');const defaultStaff=await login('commission_no_access_staff');await account('commission_no_access_dispatch','Dispatch Center Manager',dispatchA.id);const defaultDispatch=await login('commission_no_access_dispatch');const source=await ok(await req('/api/commission-settings'));assert.equal(source.data.stepEnabled,false);assert.equal((await req('/api/commission-settings','GET',undefined,defaultStaff)).status,403);assert.equal((await req('/api/commission-settings','GET',undefined,defaultDispatch)).status,403);
+ await account('commission_reader','Admin Staff',null,{allow:['commission-settings.view'],deny:[]});const reader=await login('commission_reader');assert.equal((await req('/api/commission-settings','GET',undefined,reader)).status,200);assert.equal((await req('/api/commission-settings','PUT',{...source.data,version:source.version},reader)).status,403);assert.equal((await req('/api/commission-settings/calculate','POST',{amount:100,uplineCount:3},reader)).status,200);
+ await account('commission_center','Dispatch Center Manager',dispatchA.id,{allow:['commission-settings.view','commission-settings.manage'],deny:[]});const center=await login('commission_center');assert.equal((await req('/api/commission-settings','PUT',{...source.data,version:source.version},center)).status,403);
+ const saved=await ok(await req('/api/commission-settings','PUT',{...source.data,version:source.version,stepEnabled:true,steps:[{rate:5}],affiliateEnabled:true,affiliateRate:10}));assert.equal(saved.version,source.version+1);assert.equal((await req('/api/commission-settings','PUT',{...source.data,version:source.version})).status,409);const preview=await ok(await req('/api/commission-settings/calculate','POST',{amount:100,uplineCount:3}));assert.equal(preview.stepTotal,'5.00');assert.equal(preview.affiliateTotal,'1.00');
+});
