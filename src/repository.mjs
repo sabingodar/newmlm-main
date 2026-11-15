@@ -40,7 +40,8 @@ export function createRepository(db) {
     if(!schemas[kind])fail('Unknown module',404);
     if(options.centerId&&kind==='orders'&&!id){if(input.dispatchCenterId&&Number(input.dispatchCenterId)!==options.centerId)fail('This order belongs to a different center',403);input={...input,dispatchCenterId:options.centerId};}
     if(options.centerId&&kind==='tasks'&&!id){if(input.centerId&&Number(input.centerId)!==options.centerId)fail('This task belongs to a different center',403);input={...input,centerId:options.centerId};}
-    let validated=options.dispatchOnly?null:validate(kind,input);
+    const approvePayment=kind==='orders'&&options.approvePayment===true;
+    let validated=approvePayment?{paymentStatus:'Paid'}:options.dispatchOnly?null:validate(kind,input);
     return db.transaction(async client=>{
       const centralEffects=[];
       if(['orders','ranks','users'].includes(kind))await client.query('SELECT pg_advisory_xact_lock(76241905)');
@@ -59,6 +60,14 @@ export function createRepository(db) {
         validated=validate('orders',{...existing.data,...input});
       }
       if(existing?.data.legacyReadOnly&&kind!=='ranks')fail('Historical record is preserved read-only; see Source data archive.');
+      if(approvePayment){
+        if(!existing)fail('Order not found',404);
+        const order=existing.data;
+        if(['esewa','khalti'].includes(order.paymentType))fail('Verify this payment with the gateway',409);
+        if(['Cancelled','Refunded','Unknown'].includes(order.status)||order.paymentStatus==='Refunded')fail('This order is not eligible for payment approval',409);
+        if(order.paymentStatus==='Paid')return record(existing);
+        if((order.paymentStatus&&order.paymentStatus!=='Pending')||!Number.isInteger(input.version))fail('Reload the order and confirm it is awaiting payment',409);
+      }
       if(input.version!==undefined&&existing&&Number(input.version)!==existing.version)fail('Record changed. Refresh and try again.',409);
       const old=existing?.data,data={...(kind==='products'?configuredProduct(old||{}):old),...validated};
       const linkedCenter=kind==='tasks'?data.centerId:kind==='orders'?data.dispatchCenterId:null;
@@ -77,7 +86,7 @@ export function createRepository(db) {
       }
       if(input.userId!==undefined&&['orders','deposits','withdrawals'].includes(kind)){if(!Number.isSafeInteger(Number(input.userId))||Number(input.userId)<1||!(await client.query("SELECT id FROM records WHERE kind='users' AND id=$1",[input.userId])).rowCount)fail('Invalid member association');data.userId=Number(input.userId);}
       if(['deposits','withdrawals'].includes(kind)&&old&&!['Initiated','Pending'].includes(old.status))fail('Finalized record cannot be changed');
-      if(kind==='orders') {
+      if(kind==='orders'&&!approvePayment) {
        if(old?.inventoryManaged&&old.status!=='Cancelled'&&data.status==='Cancelled')await releaseInventoryOrder(client,Number(id),options.actor||'admin');
        if(old?.inventoryManaged&&['Dispatched','Out for delivery','Delivered'].includes(data.status)){const remaining=Number((await client.query('SELECT COALESCE(sum(remaining),0) AS quantity FROM inventory_order_allocations WHERE order_id=$1',[id])).rows[0].quantity);if(remaining>0)fail('Dispatch all remaining quantities through Order Flow before selecting this status',409);}
        if(data.status==='Partially dispatched'&&old?.status!==data.status)fail('Partial dispatch status is recorded through Order Flow');
@@ -113,6 +122,7 @@ export function createRepository(db) {
         if(!Number.isSafeInteger(Math.round(data.amount*100))||data.amount>1e10)fail('Order amount exceeds the supported limit');
       }
        }
+      if(approvePayment)data.paymentApproval={by:options.actor,at:new Date().toISOString()};
       const result=id?
         await client.query('UPDATE records SET data=$1,version=version+1,updated_at=now() WHERE id=$2 RETURNING *',[data,id]):
         await client.query('INSERT INTO records(kind,data) VALUES($1,$2) RETURNING *',[kind,data]);
@@ -125,7 +135,7 @@ export function createRepository(db) {
       if(kind==='users'&&input.location!==undefined)await persistLocation(client,saved.id,data.location);
       if(kind==='users'&&old&&old.email!==data.email)await client.query('UPDATE member_profiles SET email_verified=NULL WHERE user_id=$1',[saved.id]);
       if(kind==='users'&&old&&old.phone!==data.phone)await client.query('UPDATE member_profiles SET mobile_verified=NULL WHERE user_id=$1',[saved.id]);
-      await client.query('INSERT INTO audit(action,kind,record_id,details) VALUES($1,$2,$3,$4)',[id?'Updated':'Created',kind,saved.id,{...(options.actor?{actor:options.actor}:{})}]);
+      await client.query('INSERT INTO audit(action,kind,record_id,details) VALUES($1,$2,$3,$4)',[approvePayment?'Approved order payment':id?'Updated':'Created',kind,saved.id,{...(options.actor?{actor:options.actor}:{})}]);
       return record(saved);
     });
   }

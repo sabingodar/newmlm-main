@@ -169,6 +169,16 @@ const server=http.createServer(async(req,res)=>{
       if(req.headers['x-member-preview']==='true'&&!can(actor,'users.preview'))fail('Member panel preview is not enabled for your account',403);
       const centerRoute=path.match(/^\/api\/center-management(?:\/(\d+)(?:\/(manager))?)?$/);
       if(centerRoute){const [,id,action]=centerRoute;if(action==='manager'&&req.method==='POST')return json(res,200,await centerManagement.assign(actor,id,await body(req)));if(!id&&req.method==='GET')return json(res,200,await centerManagement.list(actor,Object.fromEntries(url.searchParams)));if((!id&&req.method==='POST')||(id&&!action&&req.method==='PUT'))return json(res,id?200:201,await centerManagement.save(actor,id,await body(req)));fail('Method not allowed',405);}
+      const approvePaymentRoute=path.match(/^\/api\/orders\/([1-9]\d{0,15})\/approve-payment$/);
+      if(approvePaymentRoute){
+        if(req.method!=='POST')fail('Method not allowed',405);
+        requirePermission(actor,'orders.manage');
+        if(isCenterManager(actor))fail('Only central administration can approve order payments',403);
+        const id=approvePaymentRoute[1];
+        if(!Number.isSafeInteger(Number(id)))fail('Invalid order');
+        const {version}=await body(req);
+        return json(res,200,await repository.save('orders',id,{version},{actor:actor.username,approvePayment:true}));
+      }
       if(path.startsWith('/api/payment-verification/')&&req.method==='POST'){requirePermission(actor,'orders.manage');if(isCenterManager(actor))fail('Only central administration can verify gateway payments',403);const id=path.split('/').pop();if(!/^[0-9]+$/.test(id))fail('Invalid order');const row=(await db.query("SELECT data FROM records WHERE kind='orders' AND id=$1",[id])).rows[0];if(!row)fail('Order not found',404);return json(res,200,await payments.verifyOrder(row.data.userId,Number(id)));}
       if(/^\/api\/users\/\d+\/sharing$/.test(path)){const id=Number(path.split('/')[3]);requirePermission(actor,...(req.method==='GET'?['users.view','users.manage']:['users.manage']));if(req.method==='GET')return json(res,200,await productSharing.get(id));if(req.method==='POST'){if(isCenterManager(actor))fail('Only central administration can authorize product sharing',403);return json(res,200,await productSharing.save(id,await body(req),actor.username));}fail('Method not allowed',405);}
       if(path==='/api/payment-settings'){if(req.method==='GET'){requirePermission(actor,'payment-settings.view','payment-settings.manage');return json(res,200,await payments.get());}if(req.method==='PUT'){requirePermission(actor,'payment-settings.manage');return json(res,200,await payments.save(await body(req),actor.username));}fail('Method not allowed',405);}
