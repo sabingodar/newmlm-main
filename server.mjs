@@ -1,3 +1,4 @@
+import {replaceMemberPaymentSlip,sendPaymentSlip} from './src/order-payment-slips.mjs';
 import {createOrderPaymentReview} from './src/order-payment-review.mjs';
 import {createCrmLeads} from './src/crm-leads.mjs';
 import {managementDefaults,validateManagement} from './src/management.mjs';
@@ -107,6 +108,15 @@ const server=http.createServer(async(req,res)=>{
       if(path.startsWith('/api/pages/')&&req.method==='GET'){const page=publicLegalPages(await settings()).find(p=>p.slug===decodeURIComponent(path.slice(11)));if(!page)fail('Page not found',404);return json(res,200,page);}
       if(path==='/api/storefront'&&req.method==='GET')return json(res,200,await publicStorefrontData());
       if(path==='/api/storefront/products'&&req.method==='GET')return json(res,200,await storefront.products(Object.fromEntries(url.searchParams)));
+      const memberSlipRoute=path.match(/^\/api\/payments\/orders\/([1-9]\d{0,15})\/slip$/);
+      if(memberSlipRoute){
+        const member=await memberAuth.session(req.headers.cookie),id=memberSlipRoute[1];
+        if(member.must_change_password||!member.permissions.includes('orders'))fail('Orders are unavailable for this account',403);
+        if(!Number.isSafeInteger(Number(id)))fail('Invalid order');
+        if(req.method==='GET')return await sendPaymentSlip(db,res,id,member.user_id);
+        if(req.method==='POST')return json(res,200,await replaceMemberPaymentSlip(db,member.user_id,id,await body(req)));
+        fail('Method not allowed',405);
+      }
       if((path.startsWith('/api/payments/orders/')&&/^[0-9]+$/.test(path.split('/')[4])&&['start','verify'].includes(path.split('/')[5])&&path.split('/').length===6)&&req.method==='POST'){const m=await memberAuth.session(req.headers.cookie);if(m.must_change_password||!m.permissions.includes('orders'))fail('Ordering is unavailable for this account',403);const parts=path.split('/');return json(res,200,await payments[parts[5]==='start'?'start':'verifyOrder'](m.user_id,Number(parts[4])));}
       if(path.startsWith('/api/cart/')){
         let member=null;try{member=await memberAuth.session(req.headers.cookie);}catch(e){if(e.status!==401)throw e;}
@@ -170,6 +180,13 @@ const server=http.createServer(async(req,res)=>{
       if(req.headers['x-member-preview']==='true'&&!can(actor,'users.preview'))fail('Member panel preview is not enabled for your account',403);
       const centerRoute=path.match(/^\/api\/center-management(?:\/(\d+)(?:\/(manager))?)?$/);
       if(centerRoute){const [,id,action]=centerRoute;if(action==='manager'&&req.method==='POST')return json(res,200,await centerManagement.assign(actor,id,await body(req)));if(!id&&req.method==='GET')return json(res,200,await centerManagement.list(actor,Object.fromEntries(url.searchParams)));if((!id&&req.method==='POST')||(id&&!action&&req.method==='PUT'))return json(res,id?200:201,await centerManagement.save(actor,id,await body(req)));fail('Method not allowed',405);}
+      const adminSlipRoute=path.match(/^\/api\/order-payments\/([1-9]\d{0,15})\/slip$/);
+      if(adminSlipRoute&&req.method==='GET'){
+        requirePermission(actor,'orders.view','orders.manage');
+        if(isCenterManager(actor))fail('Only central administration can view payment slips',403);
+        if(!Number.isSafeInteger(Number(adminSlipRoute[1])))fail('Invalid order');
+        return await sendPaymentSlip(db,res,adminSlipRoute[1]);
+      }
       const orderPaymentsRoute=path.match(/^\/api\/order-payments(?:\/([1-9]\d{0,15})(?:\/(reject))?)?$/);
       if(orderPaymentsRoute){
         if(isCenterManager(actor))fail('Only central administration can review order payments',403);

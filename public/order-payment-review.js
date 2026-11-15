@@ -1,5 +1,4 @@
 window.mountOrderPaymentReview = async ({main, wallet, walletActions, api, esc, money, toast}) => {
-  const canManage = window.adminCan('orders.manage');
   const dates = new Intl.DateTimeFormat('en-GB', {dateStyle:'medium', timeStyle:'short', timeZone:'Asia/Kathmandu'});
   const when = value => value ? dates.format(new Date(value)) : '—';
   const statusText = value => value === 'Failed' ? 'Rejected / Failed' : value;
@@ -51,7 +50,7 @@ window.mountOrderPaymentReview = async ({main, wallet, walletActions, api, esc, 
           <td><strong>${esc(ref(payment))}</strong><small>${esc(when(payment.created_at))}</small></td>
           <td>${esc(payment.customer || payment.recipient || '—')}</td>
           <td>${esc(payment.method || '—')}<small>${esc(payment.paymentReference || '')}</small></td>
-          <td>${money(payment.amount)}</td><td>${badge(payment.status)}</td>
+          <td>${money(payment.amount)}</td><td>${badge(payment.status)}${payment.hasPaymentSlip?`<small><a href="/api/order-payments/${esc(payment.id)}/slip" target="_blank" rel="noopener">View slip ↗</a></small>`:''}</td>
           <td><button type="button" class="button" data-payment-open="${esc(payment.id)}">Details</button></td>
         </tr>`).join('')}</tbody></table></div>
         <div class="pagination"><span>${data.total} payments · Page ${page} of ${last}</span><div>
@@ -59,7 +58,7 @@ window.mountOrderPaymentReview = async ({main, wallet, walletActions, api, esc, 
         <button type="button" data-payment-page="1" ${page===last?'disabled':''}>Next</button></div></div>`
         : '<p class="empty">No order payments match these filters.</p>';
       feedback.textContent = '';
-      results.querySelectorAll('[data-payment-open]').forEach(button => button.onclick = () => open(button));
+      results.querySelectorAll('[data-payment-open]').forEach(button => button.onclick = () => window.openOrderPaymentDetails({id:button.dataset.paymentOpen,button,container:section,api,esc,money,toast,onSaved:load}));
       results.querySelectorAll('[data-payment-page]').forEach(button => button.onclick = () => { page+=Number(button.dataset.paymentPage); load(); });
     } catch (error) {
       if (request===current) {
@@ -69,12 +68,22 @@ window.mountOrderPaymentReview = async ({main, wallet, walletActions, api, esc, 
     }
   }
 
-  async function open(button) {
+  search.oninput=()=>{page=1;request++;clearTimeout(timer);timer=setTimeout(load,200);};
+  filter.onchange=()=>{page=1;load();};
+  await load();
+};
+
+window.openOrderPaymentDetails = async ({id,button,container,api,esc,money,toast,onSaved,mode}) => {
     button.disabled=true;
-    const path='order-payments/'+button.dataset.paymentOpen;
+    const path='order-payments/'+id;
+    const canManage=window.adminCan('orders.manage');
+    const dates=new Intl.DateTimeFormat('en-GB',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Kathmandu'});
+    const when=value=>value?dates.format(new Date(value)):'—';
+    const ref=payment=>payment.reference||'#'+payment.id;
+    const badge=value=>`<span class="badge ${value==='Paid'?'good':value==='Failed'?'bad':'pending'}">${esc(value==='Failed'?'Rejected / Failed':value)}</span>`;
     try {
       const payment=await api(path);
-      if(!section.contains(button))return;
+      if(!container.contains(button))return;
       const gateway=['esewa','khalti'].includes(payment.paymentType)||!!payment.gatewayVerifiedAt;
       const editable=canManage&&!payment.historical;
       const referenceEditable=editable&&!gateway&&payment.status!=='Refunded';
@@ -94,17 +103,18 @@ window.mountOrderPaymentReview = async ({main, wallet, walletActions, api, esc, 
           ${payment.approval?`<div><dt>Last approved</dt><dd>${esc(payment.approval.by)} · ${esc(when(payment.approval.at))}</dd></div>`:''}
           ${payment.rejection?`<div><dt>Last rejection</dt><dd>${esc(payment.rejection.by)} · ${esc(when(payment.rejection.at))}<p class="crm-note">${esc(payment.rejection.reason)}</p></dd></div>`:''}
         </dl>
+        ${payment.hasPaymentSlip?`<p><a class="button" href="/api/order-payments/${esc(id)}/slip" target="_blank" rel="noopener">View payment slip ↗</a></p>`:'<p>No payment slip attached.</p>'}
         <div class="form-grid">
           <label>Payment reference<input name="paymentReference" maxlength="200" value="${esc(payment.paymentReference || '')}" ${referenceEditable?'':'readonly'}></label>
           <label class="wide-field">Internal payment note<textarea name="note" maxlength="2000" rows="3" ${editable?'':'readonly'}>${esc(payment.note || '')}</textarea></label>
         </div>
-        ${editable&&payment.canReject?`<details><summary>Reject payment</summary><label>Reason<textarea name="reason" rows="3" maxlength="2000"></textarea></label>
+        ${editable&&payment.canReject?`<details ${mode==='reject'?'open':''}><summary>Reject payment</summary><label>Reason<textarea name="reason" rows="3" maxlength="2000"></textarea></label>
           <p>Changes the payment to Failed. The order and any funds are unaffected.</p><button type="button" class="button" data-reject-payment>Reject payment</button></details>`:''}
         <p class="form-feedback" role="status"></p>
         <div class="actions">${editable?'<button type="submit" class="button">Save payment details</button>':''}
           ${approvable?'<button type="button" class="primary" data-approve-payment>Approve payment</button>':''}</div>
       </form>`;
-      section.append(dialog);
+      document.body.append(dialog);
       dialog.addEventListener('close',()=>dialog.remove(),{once:true});
       const form=dialog.querySelector('form'), message=form.querySelector('[role=status]');
       form.querySelector('[data-close-payment]').onclick=()=>dialog.close();
@@ -116,7 +126,7 @@ window.mountOrderPaymentReview = async ({main, wallet, walletActions, api, esc, 
           await api(url,method,{...input,version:payment.version});
           dialog.close();
           toast(success);
-          await load();
+          await onSaved();
         } catch(error) {
           message.textContent=error.message;
           controls.forEach(control=>control.disabled=false);
@@ -140,14 +150,11 @@ window.mountOrderPaymentReview = async ({main, wallet, walletActions, api, esc, 
         }
       };
       dialog.showModal();
+      if(mode==='reject')form.elements.reason?.focus();
+      if(mode==='edit')form.elements.paymentReference.focus();
     } catch(error) {
       toast(error.message);
     } finally {
       button.disabled=false;
     }
-  }
-
-  search.oninput=()=>{page=1;request++;clearTimeout(timer);timer=setTimeout(load,200);};
-  filter.onchange=()=>{page=1;load();};
-  await load();
-};
+  };

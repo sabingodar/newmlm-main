@@ -9,7 +9,7 @@ const columns = `id::text, version, created_at, updated_at,
  COALESCE(NULLIF(data->>'paymentStatus',''), NULLIF(data->>'legacyPayment',''), 'Pending') AS status,
  data->>'paymentReference' AS "paymentReference", data->'paymentApproval' AS approval,
  data->'paymentRejection' AS rejection, data->>'paymentReviewNote' AS note,
- data->>'gatewayVerifiedAt' AS "gatewayVerifiedAt", COALESCE(data->>'legacyReadOnly' = 'true', false) AS historical`;
+ COALESCE(data->>'hasPaymentSlip'='true',false) AS "hasPaymentSlip", data->>'gatewayVerifiedAt' AS "gatewayVerifiedAt", COALESCE(data->>'legacyReadOnly' = 'true', false) AS historical`;
 export function visibleOrderPaymentData(data) {
  const {paymentReviewNote, paymentRejection, paymentApproval, ...visible} = data;
  return visible;
