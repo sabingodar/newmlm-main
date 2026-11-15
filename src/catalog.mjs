@@ -4,11 +4,35 @@ export const productDefaults={showOnWebsite:true,showInQuickOrder:true,showInDis
 export const configuredProduct=d=>({...productDefaults,...d});
 export function productPrice(d,channel){d=configuredProduct(d);const p=channel==='discount'?d.discountPrice:channel==='wholesale'?d.wholesalePrice:d.price;return p===null||p===undefined?Number(d.price):Number(p);}
 export function productVisible(d,channel){const key=channelFlags[channel];if(!key)fail('Unknown product panel');return d.status==='Active'&&configuredProduct(d)[key]===true;}
-export function productView(r,channel){const p=configuredProduct(r.data);return {id:Number(r.id),name:p.name,category:p.category,categoryId:p.categoryId,subcategory:p.subcategory||'',subcategoryId:p.subcategoryId,features:p.features||'',shortDescription:p.shortDescription||'',description:p.description||'',imageUrl:p.imageUrl||'',images:p.images||[p.imageUrl].filter(Boolean),featuredImageUrl:p.featuredImageUrl||p.imageUrl||'',featured:p.featured,weight:p.weight,unit:p.unit||'',color:p.color||'',youtubeUrl:p.youtubeUrl||'',warrantyEnabled:p.warrantyEnabled,warrantyPeriod:p.warrantyPeriod,warrantyUnit:p.warrantyUnit,rewardsEnabled:p.rewardsEnabled,salesRewardPoints:p.salesRewardPoints||0,purchaseRewardPoints:p.purchaseRewardPoints||0,regionalCommissions:p.regionalCommissions||{country:0,province:0,district:0,city:0},dispatchCommission:p.dispatchCommission||0,rankCommissions:p.rankCommissions||[],bv:Number(p.bv||0),manageStock:p.manageStock,price:productPrice(p,channel),originalPrice:p.originalPrice??p.price,stock:p.manageStock?Number(r.inventory_stock??p.stock):10000,minimumQuantity:channel==='wholesale'?p.wholesaleMinQty:1,vatRate:p.vatRate,vatIncluded:p.vatIncluded,businessValue:p.businessValue??productPrice(p,channel),version:r.version};}
+export function validateWholesaleSlabs(input, minimumQuantity) {
+ if (!Array.isArray(input) || input.length > 50) fail('Enter up to 50 wholesale slabs');
+ const slabs = input.map(slab => {
+  if (!slab || typeof slab !== 'object' || Array.isArray(slab)) fail('Invalid wholesale slab');
+  const {fromQty, toQty, discountPercent} = slab;
+  if (!Number.isInteger(fromQty) || !Number.isInteger(toQty) || fromQty < minimumQuantity || toQty < fromQty || toQty > 10000) {
+   fail('Wholesale ranges must start at or above the minimum quantity and end at or below 10,000');
+  }
+  if (!Number.isFinite(discountPercent) || discountPercent <= 0 || discountPercent > 100 || Math.abs(discountPercent * 100 - Math.round(discountPercent * 100)) > 0.00001) {
+   fail('Wholesale discount must be 0.01–100% with up to two decimal places');
+  }
+  return {fromQty, toQty, discountPercent};
+ }).sort((a, b) => a.fromQty - b.fromQty);
+ if (slabs.some((slab, i) => i > 0 && slab.fromQty <= slabs[i - 1].toQty)) fail('Wholesale quantity ranges cannot overlap');
+ return slabs;
+}
+function wholesaleRates(slabs, price) {
+ const cents = BigInt(Math.round(price * 100));
+ return slabs.map(slab => ({
+  ...slab,
+  unitPrice: Number((cents * BigInt(10000 - Math.round(slab.discountPercent * 100)) + 5000n) / 10000n) / 100
+ }));
+}
+export function productView(r,channel){const p=configuredProduct(r.data);return {id:Number(r.id),name:p.name,category:p.category,categoryId:p.categoryId,subcategory:p.subcategory||'',subcategoryId:p.subcategoryId,features:p.features||'',shortDescription:p.shortDescription||'',description:p.description||'',imageUrl:p.imageUrl||'',images:p.images||[p.imageUrl].filter(Boolean),featuredImageUrl:p.featuredImageUrl||p.imageUrl||'',featured:p.featured,weight:p.weight,unit:p.unit||'',color:p.color||'',youtubeUrl:p.youtubeUrl||'',warrantyEnabled:p.warrantyEnabled,warrantyPeriod:p.warrantyPeriod,warrantyUnit:p.warrantyUnit,rewardsEnabled:p.rewardsEnabled,salesRewardPoints:p.salesRewardPoints||0,purchaseRewardPoints:p.purchaseRewardPoints||0,regionalCommissions:p.regionalCommissions||{country:0,province:0,district:0,city:0},dispatchCommission:p.dispatchCommission||0,rankCommissions:p.rankCommissions||[],bv:Number(p.bv||0),manageStock:p.manageStock,price:productPrice(p,channel),...(channel==='wholesale'&&p.wholesaleSlabs?.length?{wholesaleSlabs:wholesaleRates(p.wholesaleSlabs,productPrice(p,channel))}:{}),originalPrice:p.originalPrice??p.price,stock:p.manageStock?Number(r.inventory_stock??p.stock):10000,minimumQuantity:channel==='wholesale'?p.wholesaleMinQty:1,vatRate:p.vatRate,vatIncluded:p.vatIncluded,businessValue:p.businessValue??productPrice(p,channel),version:r.version};}
 export function lineAmounts(p,quantity){
  const cents=value=>{const n=Math.round(Number(value)*100);if(!Number.isSafeInteger(n)||n<0||n>1e12)fail('Invalid price or order amount');return n;};
  const ratio=(value,numerator,denominator)=>Number((BigInt(value)*BigInt(numerator)+BigInt(Math.floor(denominator/2)))/BigInt(denominator));
- const unit=cents(p.price),subtotal=unit*quantity,rate=Math.round(Number(p.vatRate)*100),business=cents(p.businessValue)*quantity;
+ const slab=p.wholesaleSlabs?.find(s=>quantity>=s.fromQty&&quantity<=s.toQty);
+ const unit=cents(slab?.unitPrice??p.price),subtotal=unit*quantity,rate=Math.round(Number(p.vatRate)*100),business=cents(p.businessValue)*quantity;
  if(!Number.isSafeInteger(subtotal)||subtotal>1e12||!Number.isSafeInteger(business)||business>1e12||!Number.isInteger(rate)||rate<0||rate>10000)fail('Invalid price, quantity or VAT setting');
  const taxable=p.vatIncluded?ratio(subtotal,10000,10000+rate):subtotal,vat=p.vatIncluded?subtotal-taxable:ratio(subtotal,rate,10000),total=p.vatIncluded?subtotal:subtotal+vat;
  if(total>1e12)fail('Order amount exceeds the supported limit');return {unitPrice:unit/100,amount:total/100,taxableAmount:taxable/100,vatAmount:vat/100,vatRate:p.vatRate,vatIncluded:p.vatIncluded,businessAmount:business/100};

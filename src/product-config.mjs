@@ -1,3 +1,4 @@
+import {validateWholesaleSlabs} from './catalog.mjs';
 import {fail} from './validation.mjs';
 import {uploadedImage} from './storefront.mjs';
 export const commissionDefaults={dispatchCommission:0,rankCommissions:[],regionalCommissions:{country:0,province:0,district:0,city:0}};
@@ -13,6 +14,7 @@ export async function commissions(client,input){
  return {dispatchCommission,rankCommissions:rankCommissions.sort((a,b)=>a.rankId-b.rankId),regionalCommissions};
 }
 export async function validateProductDetails(client,data,input,{isNew=false}={}){
+ if(input.wholesaleSlabs!==undefined||data.wholesaleSlabs!==undefined)data.wholesaleSlabs=validateWholesaleSlabs(input.wholesaleSlabs===undefined?data.wholesaleSlabs:input.wholesaleSlabs,data.wholesaleMinQty);
  const id=value=>{if(!Number.isSafeInteger(Number(value))||Number(value)<1)fail('Invalid category');return Number(value);};
  if(input.categoryId!==undefined&&input.categoryId!==''){
   const cat=(await client.query('SELECT * FROM product_categories WHERE id=$1 AND parent_id IS NULL',[id(input.categoryId)])).rows[0];if(!cat)fail('Choose a category');
