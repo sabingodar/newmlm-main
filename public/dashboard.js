@@ -3,6 +3,37 @@
   const icon=k=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${paths[k]||paths.ranks}"/></svg>`;
   window.businessIcons=Object.fromEntries(Object.keys(paths).map(k=>[k,icon(k)]));
   window.businessIcons.affiliates=icon('ranks');
+  window.bindWorkspaceMenuSearch = sidebar => {
+    const nav = sidebar.querySelector('nav');
+    const groups = [...nav.querySelectorAll('.nav-group')].map(group => ({
+      group,
+      label: group.querySelector('.nav-label').textContent.toLowerCase(),
+      items: [...group.querySelectorAll('a, button')].map(link => ({
+        link,
+        label: link.textContent.trim().toLowerCase()
+      }))
+    }));
+    const search = document.createElement('div');
+    search.className = 'workspace-menu-search';
+    search.innerHTML = '<input type="search" placeholder="Search menu" aria-label="Search menu"><p role="status" hidden>No matching menu items.</p>';
+    nav.before(search);
+    search.querySelector('input').addEventListener('input', event => {
+      const query = event.target.value.trim().toLowerCase();
+      let hasMatches = false;
+      for (const {group, label, items} of groups) {
+        const matchesGroup = label.includes(query);
+        let visible = false;
+        for (const item of items) {
+          item.link.hidden = !matchesGroup && !item.label.includes(query);
+          visible ||= !item.link.hidden;
+        }
+        group.hidden = !visible;
+        hasMatches ||= visible;
+      }
+      search.querySelector('[role=status]').hidden = hasMatches;
+      nav.scrollTop = 0;
+    });
+  };
   window.businessNavigation=(labels)=>[
     ['WORKSPACE',['dashboard','users','products','orders']],
     ['FINANCE & NETWORK',['payment-settings','reward-settings','commission-settings','deposits','withdrawals','plans','ranks','affiliates','pins']],
