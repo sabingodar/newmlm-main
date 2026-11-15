@@ -33,6 +33,7 @@ export function authorizeAdmin(p,path,method){
  if(['/api/session','/api/logout'].includes(path))return;
  if(path==='/api/dashboard')return requirePermission(p,'dashboard.view');
  if(path.startsWith('/api/admin-users')||path.startsWith('/api/admin-roles'))fail('Only an Admin can manage administrator accounts and roles',403);
+ if(/^\/api\/crm-leads(?:\/[1-9]\d{0,15})?$/.test(path))return requirePermission(p,...(method==='GET'?['leads.view','leads.manage']:['leads.manage']));
  const record=path.match(/^\/api\/records\/([a-z]+)(?:\/(\d+))?$/);
  if(record){const [,kind,id]=record;if(method==='GET')return requirePermission(p,kind+'.view',kind+'.manage',...(kind==='centers'?['dispatch-centers.view','service-centers.view','dispatch-centers.manage','service-centers.manage']:kind==='affiliates'?['users.rank','products.manage','settings.manage']:[]));if(kind==='orders'&&id&&method==='PUT')return requirePermission(p,'orders.manage','orders.dispatch');return requirePermission(p,kind+'.manage');}
  if(path.startsWith('/api/products/'))return requirePermission(p,'products.manage');

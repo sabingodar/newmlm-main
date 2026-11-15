@@ -34,3 +34,26 @@ form label[hidden],form [data-bank-payment][hidden]{display:none!important}.chec
 .workspace-menu-search p{margin:8px 0 0;font-size:12px;color:#edf7ef}
 .shell :is(#sidebar,#member-sidebar) nav{min-height:0;overflow-y:auto;overscroll-behavior-y:contain;scrollbar-width:thin;scrollbar-color:#88ad99 transparent}
 .shell :is(#sidebar,#member-sidebar) nav [hidden]{display:none!important}
+
+.crm-panel{padding:0;overflow:hidden}
+.crm-tabs,.crm-filters{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid #dfe8e2}
+.crm-tabs button{display:inline-flex;align-items:center;gap:7px;padding:8px 11px;border:1px solid #dbe7df;border-radius:7px;background:#fff;color:#214538;font:inherit}
+.crm-tabs button[aria-pressed=true]{background:#1b553f;border-color:#1b553f;color:#fff}
+.crm-tabs span{background:#64877325;border-radius:5px;padding:1px 5px;font-size:11px}
+.crm-filters input[type=search]{width:min(340px,100%)}
+.crm-filters label{display:flex;align-items:center;gap:6px}
+.crm-filters input[type=checkbox]{width:auto}
+.crm-feedback{padding:0 20px}
+.crm-feedback:empty{display:none}
+.crm-table td small{display:block;margin-top:4px}
+.crm-status{display:inline-block;border-radius:5px;padding:4px 7px;background:#eef2ef;color:#294a3e;white-space:nowrap}
+.crm-status.crm-new{background:#e7f0fa;color:#234e78}
+.crm-status.crm-contacted{background:#fbefdb;color:#694414}
+.crm-status.crm-qualified{background:#e4f2e7;color:#235b38}
+.crm-due{color:#9a3c22;font-weight:600}
+.crm-dialog{width:min(660px,calc(100vw - 28px))}
+.crm-lead-form{padding:20px}
+.crm-lead-form .form-grid{margin:12px 0}
+.crm-history ol{max-height:240px;overflow:auto;padding-left:24px}
+.crm-history li{margin-bottom:10px}
+.crm-note{white-space:pre-wrap;overflow-wrap:anywhere}
