@@ -1,3 +1,4 @@
+import {visibleOrderPaymentData} from './order-payment-review.mjs';
 import {randomBytes,scrypt} from 'node:crypto';
 import {promisify} from 'node:util';
 import {fail} from './validation.mjs';
@@ -18,7 +19,7 @@ export function createMembers(db) {
     const where=`kind=$1 AND (data->>'userId'=$2 OR (NOT data ? 'userId' AND $3<>'' AND $3=ANY(regexp_split_to_array(replace(COALESCE(data->>'customer',data->>'member',''),'@',''),E'\\n'))))`;
     const params=[kind,String(u.id),name];const total=Number((await db.query('SELECT count(*) FROM records WHERE '+where,params)).rows[0].count);
     const rows=(await db.query('SELECT * FROM records WHERE '+where+" ORDER BY COALESCE(data->>'sortDate',created_at::text) DESC,id DESC LIMIT 20 OFFSET $4",[...params,(page-1)*20])).rows;
-    return {items:rows.map(record),total,page,limit:20};
+    return {items:rows.map(row=>record(kind==='orders'?{...row,data:visibleOrderPaymentData(row.data)}:row)),total,page,limit:20};
   }
   async function detail(id){
     const u=await user(db,id),p=(await db.query('SELECT * FROM member_profiles WHERE user_id=$1',[u.id])).rows[0];

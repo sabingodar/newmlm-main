@@ -57,3 +57,8 @@ form label[hidden],form [data-bank-payment][hidden]{display:none!important}.chec
 .crm-history ol{max-height:240px;overflow:auto;padding-left:24px}
 .crm-history li{margin-bottom:10px}
 .crm-note{white-space:pre-wrap;overflow-wrap:anywhere}
+
+.order-payment-review .section-head{margin-bottom:0}
+.order-payment-review .crm-filters{padding:12px 0}
+.order-payment-review .badge{white-space:nowrap}
+.cms-tabs button[aria-pressed=true]{background:#1b553f;color:#fff}

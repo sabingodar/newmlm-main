@@ -1,3 +1,4 @@
+import {visibleOrderPaymentData} from './order-payment-review.mjs';
 import {attributeShares,shareInput} from './product-sharing.mjs';
 import {checkoutPayment} from './payments.mjs';
 import {readRewardPolicy,redemptionPercent} from './redemption-policy.mjs';
@@ -57,7 +58,7 @@ export function createCommerce(db){
    return {id:Number(row.id),created:row.created_at,...data};
   });
  }
- async function order(userId,orderId,client=db){const r=(await client.query("SELECT r.* FROM records r JOIN records u ON u.id=$1 AND u.kind='users' WHERE r.kind='orders' AND r.id=$2 AND (r.data->>'userId'=$1::text OR (NOT r.data ? 'userId' AND COALESCE(NULLIF(u.data->>'username',''),u.data->>'legacyUsername')=ANY(regexp_split_to_array(replace(COALESCE(r.data->>'customer',''),'@',''),E'\\n'))))",[userId,numId(orderId)])).rows[0];if(!r)fail('Order not found',404);return {id:Number(r.id),created:r.created_at,...r.data};}
+ async function order(userId,orderId,client=db){const r=(await client.query("SELECT r.* FROM records r JOIN records u ON u.id=$1 AND u.kind='users' WHERE r.kind='orders' AND r.id=$2 AND (r.data->>'userId'=$1::text OR (NOT r.data ? 'userId' AND COALESCE(NULLIF(u.data->>'username',''),u.data->>'legacyUsername')=ANY(regexp_split_to_array(replace(COALESCE(r.data->>'customer',''),'@',''),E'\\n'))))",[userId,numId(orderId)])).rows[0];if(!r)fail('Order not found',404);return {id:Number(r.id),created:r.created_at,...visibleOrderPaymentData(r.data)};}
  async function track(userId,reference){const ref=String(reference||'').trim().replace(/^#/,'');if(!ref||ref.length>100)fail('Enter your order reference');const row=(await db.query("SELECT r.id FROM records r JOIN records u ON u.id=$1 AND u.kind='users' WHERE r.kind='orders' AND (r.id::text=$2 OR r.data->>'legacyOrder'=$2) AND (r.data->>'userId'=$1::text OR (NOT r.data ? 'userId' AND COALESCE(NULLIF(u.data->>'username',''),u.data->>'legacyUsername')=ANY(regexp_split_to_array(replace(COALESCE(r.data->>'customer',''),'@',''),E'\\n')))) ORDER BY r.id DESC LIMIT 1",[userId,ref])).rows[0];if(!row)fail('Order not found in your account',404);return order(userId,row.id);}
  return {catalog,quote,checkout,order,track};
 }

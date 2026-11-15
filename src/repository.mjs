@@ -1,3 +1,4 @@
+import {canRejectOrderPayment} from './order-payment-review.mjs';
 import {settleDirectSales} from './product-sharing.mjs';
 import {snapshotNetworkCommission,settleNetworkCommission} from './network-commissions.mjs';
 import {settleRankOrder,rankRule} from './rank-rewards.mjs';
@@ -41,7 +42,9 @@ export function createRepository(db) {
     if(options.centerId&&kind==='orders'&&!id){if(input.dispatchCenterId&&Number(input.dispatchCenterId)!==options.centerId)fail('This order belongs to a different center',403);input={...input,dispatchCenterId:options.centerId};}
     if(options.centerId&&kind==='tasks'&&!id){if(input.centerId&&Number(input.centerId)!==options.centerId)fail('This task belongs to a different center',403);input={...input,centerId:options.centerId};}
     const approvePayment=kind==='orders'&&options.approvePayment===true;
-    let validated=approvePayment?{paymentStatus:'Paid'}:options.dispatchOnly?null:validate(kind,input);
+    const paymentReview=kind==='orders' ? options.paymentReview : undefined;
+    const paymentOnly=approvePayment||Boolean(paymentReview);
+    let validated=paymentReview?{}:approvePayment?{paymentStatus:'Paid'}:options.dispatchOnly?null:validate(kind,input);
     return db.transaction(async client=>{
       const centralEffects=[];
       if(['orders','ranks','users'].includes(kind))await client.query('SELECT pg_advisory_xact_lock(76241905)');
@@ -66,7 +69,35 @@ export function createRepository(db) {
         if(['esewa','khalti'].includes(order.paymentType))fail('Verify this payment with the gateway',409);
         if(['Cancelled','Refunded','Unknown'].includes(order.status)||order.paymentStatus==='Refunded')fail('This order is not eligible for payment approval',409);
         if(order.paymentStatus==='Paid')return record(existing);
-        if((order.paymentStatus&&order.paymentStatus!=='Pending')||!Number.isInteger(input.version))fail('Reload the order and confirm it is awaiting payment',409);
+        if((order.paymentStatus&&order.paymentStatus!=='Pending'&&!(order.paymentStatus==='Failed'&&order.paymentRejection))||!Number.isInteger(input.version))fail('Reload the order and confirm it is awaiting payment',409);
+      }
+      if(paymentReview){
+        if(!existing)fail('Order not found',404);
+        if(!Number.isInteger(input.version))fail('Reload the payment before saving',409);
+        const paymentText=(value,max,label)=>{
+          if(typeof value!=='string'||value.trim().length>max)fail('Invalid '+label);
+          return value.trim();
+        };
+        const order=existing.data;
+        if(!Object.hasOwn(order,'paymentStatus')&&!Object.hasOwn(order,'paymentType')&&!order.legacyPayment)fail('Order payment not found',404);
+        if(paymentReview==='reject'){
+          if(!canRejectOrderPayment(order))fail('This payment is not eligible for manual rejection',409);
+          if(order.paymentStatus==='Paid'){
+            const {rows:[history]}=await client.query(`SELECT
+              EXISTS(SELECT 1 FROM inventory_dispatches WHERE order_id=$1)
+              OR EXISTS(SELECT 1 FROM network_commission_orders WHERE order_id=$1)
+              OR EXISTS(SELECT 1 FROM direct_sales_awards WHERE order_id=$1) AS settled`,[id]);
+            if(history.settled)fail('A dispatched or settled payment cannot be rejected',409);
+          }
+          const reason=paymentText(input.reason,2000,'rejection reason');
+          if(!reason)fail('Enter a rejection reason');
+          validated={paymentStatus:'Failed',paymentRejection:{reason,by:options.actor,at:new Date().toISOString()}};
+        }else{
+          validated.paymentReviewNote=paymentText(input.note,2000,'payment note');
+          if(!['esewa','khalti'].includes(order.paymentType)&&!order.gatewayVerifiedAt&&order.paymentStatus!=='Refunded'){
+            validated.paymentReference=paymentText(input.paymentReference,200,'payment reference');
+          }
+        }
       }
       if(input.version!==undefined&&existing&&Number(input.version)!==existing.version)fail('Record changed. Refresh and try again.',409);
       const old=existing?.data,data={...(kind==='products'?configuredProduct(old||{}):old),...validated};
@@ -86,7 +117,7 @@ export function createRepository(db) {
       }
       if(input.userId!==undefined&&['orders','deposits','withdrawals'].includes(kind)){if(!Number.isSafeInteger(Number(input.userId))||Number(input.userId)<1||!(await client.query("SELECT id FROM records WHERE kind='users' AND id=$1",[input.userId])).rowCount)fail('Invalid member association');data.userId=Number(input.userId);}
       if(['deposits','withdrawals'].includes(kind)&&old&&!['Initiated','Pending'].includes(old.status))fail('Finalized record cannot be changed');
-      if(kind==='orders'&&!approvePayment) {
+      if(kind==='orders'&&!paymentOnly) {
        if(old?.inventoryManaged&&old.status!=='Cancelled'&&data.status==='Cancelled')await releaseInventoryOrder(client,Number(id),options.actor||'admin');
        if(old?.inventoryManaged&&['Dispatched','Out for delivery','Delivered'].includes(data.status)){const remaining=Number((await client.query('SELECT COALESCE(sum(remaining),0) AS quantity FROM inventory_order_allocations WHERE order_id=$1',[id])).rows[0].quantity);if(remaining>0)fail('Dispatch all remaining quantities through Order Flow before selecting this status',409);}
        if(data.status==='Partially dispatched'&&old?.status!==data.status)fail('Partial dispatch status is recorded through Order Flow');
@@ -130,12 +161,12 @@ export function createRepository(db) {
       for(const effect of centralEffects)await journalCentral(client,effect.productId,effect.delta,'order:'+saved.id+':legacy-'+effect.type,effect.type==='cancel'?'Returned cancelled legacy order stock':'Reserved manual order stock',options.actor||'admin',{orderId:Number(saved.id)});
       if(kind==='products')await journalCentral(client,Number(saved.id),old?Number(data.stock)-Number(old.stock):0,'product:'+saved.id+':version:'+saved.version,'Adjusted central stock in product editor',options.actor||'admin');
       if(kind==='orders'&&!old)await snapshotNetworkCommission(client,Number(saved.id),data.userId);
-      if(kind==='orders'){await settleNetworkCommission(client,Number(saved.id),data,options.actor||'system');await settleDirectSales(client,Number(saved.id),data,options.actor||'system');await settleRewards(client,saved.id,data);await settleRankOrder(client,data,options.actor||'system');}
+      if(kind==='orders'&&!paymentReview){await settleNetworkCommission(client,Number(saved.id),data,options.actor||'system');await settleDirectSales(client,Number(saved.id),data,options.actor||'system');await settleRewards(client,saved.id,data);await settleRankOrder(client,data,options.actor||'system');}
       if(kind==='users'&&(!old||input.sponsor!==undefined&&data.sponsor!==old.sponsor)){const sponsor=String(data.sponsor||'').trim();let referrer=null;if(sponsor){const matches=(await client.query("SELECT id FROM records WHERE kind='users' AND data->>'status'='Active' AND data->>'deletedAt' IS NULL AND lower(COALESCE(NULLIF(data->>'username',''),data->>'legacyUsername'))=lower($1)",[sponsor])).rows;if(matches.length!==1||Number(matches[0].id)===Number(saved.id))fail('Choose a valid sponsor username');referrer=matches[0].id;const cycle=(await client.query('WITH RECURSIVE chain AS (SELECT user_id,referrer_id FROM member_profiles WHERE user_id=$1 UNION SELECT p.user_id,p.referrer_id FROM member_profiles p JOIN chain c ON p.user_id=c.referrer_id) SELECT 1 FROM chain WHERE user_id=$2',[referrer,saved.id])).rowCount;if(cycle)fail('This sponsor relationship would create a cycle');}await client.query('UPDATE member_profiles SET referrer_id=$2 WHERE user_id=$1',[saved.id,referrer]);}
       if(kind==='users'&&input.location!==undefined)await persistLocation(client,saved.id,data.location);
       if(kind==='users'&&old&&old.email!==data.email)await client.query('UPDATE member_profiles SET email_verified=NULL WHERE user_id=$1',[saved.id]);
       if(kind==='users'&&old&&old.phone!==data.phone)await client.query('UPDATE member_profiles SET mobile_verified=NULL WHERE user_id=$1',[saved.id]);
-      await client.query('INSERT INTO audit(action,kind,record_id,details) VALUES($1,$2,$3,$4)',[approvePayment?'Approved order payment':id?'Updated':'Created',kind,saved.id,{...(options.actor?{actor:options.actor}:{})}]);
+      await client.query('INSERT INTO audit(action,kind,record_id,details) VALUES($1,$2,$3,$4)',[approvePayment?'Approved order payment':paymentReview==='reject'?'Rejected order payment':paymentReview?'Edited order payment':id?'Updated':'Created',kind,saved.id,{...(options.actor?{actor:options.actor}:{}),...(paymentReview==='reject'?{reason:data.paymentRejection.reason}:{})}]);
       return record(saved);
     });
   }
