@@ -8,7 +8,7 @@ const derive=promisify(scrypt),username=d=>d.username||d.legacyUsername||'';
 const id=v=>{if(!/^\d+$/.test(String(v))||!Number.isSafeInteger(Number(v))||Number(v)<1)fail('Invalid member ID');return Number(v);};
 export function createBinaryTree(db){
  async function descendants(client,owner){return (await client.query(`WITH RECURSIVE tree AS (SELECT user_id,parent_id,position,0 depth,ARRAY[user_id] path FROM member_profiles WHERE user_id=$1 UNION ALL SELECT p.user_id,p.parent_id,p.position,t.depth+1,t.path||p.user_id FROM member_profiles p JOIN tree t ON p.parent_id=t.user_id WHERE t.depth<64 AND NOT p.user_id=ANY(t.path)) SELECT r.id,r.data->>'name' name,COALESCE(NULLIF(r.data->>'username',''),r.data->>'legacyUsername') username,r.data->>'status' status,r.data->>'legacyUsername' legacy_username,r.data->'sourceTree' source_tree,p.parent_id,p.position,t.depth,a.data->>'name' rank FROM tree t JOIN records r ON r.id=t.user_id AND r.kind='users' JOIN member_profiles p ON p.user_id=r.id LEFT JOIN records a ON a.id=p.affiliate_rank_id ORDER BY t.depth,r.id LIMIT 5000`,[id(owner)])).rows;}
- async function owner(client,ownerId){const r=(await client.query("SELECT r.*,p.permissions FROM records r JOIN member_profiles p ON p.user_id=r.id WHERE r.kind='users' AND r.id=$1",[id(ownerId)])).rows[0];if(!r||r.data.status!=='Active'||!r.permissions.includes('profile'))fail('Member network access is not enabled',403);return r;}
+ async function owner(client,ownerId){const r=(await client.query("SELECT r.*,p.permissions FROM records r JOIN member_profiles p ON p.user_id=r.id WHERE r.kind='users' AND r.id=$1",[id(ownerId)])).rows[0];if(!r||r.data.status!=='Active')fail('Member network access is not enabled',403);return r;}
  const childrenKnown=n=>n.source_tree?.childrenKnown===true||!n.legacy_username;
  async function tree(ownerId,targetUsername='',q=''){
   await owner(db,ownerId);const all=await descendants(db,ownerId),byId=new Map(all.map(n=>[Number(n.id),n]));
@@ -22,7 +22,7 @@ export function createBinaryTree(db){
   return {registrationSettings,owner:clean(byId.get(Number(ownerId))),root:clean(root),nodes,next:{Left:registrationSettings.earth?next('Left'):null,Right:registrationSettings.sky?next('Right'):null},summary:{earth:branchCount('Left'),sky:branchCount('Right')},parent:root.parent_id&&byId.has(Number(root.parent_id))?clean(byId.get(Number(root.parent_id))):null,matches:q?all.filter(n=>[n.username,n.name].some(s=>s?.toLowerCase().includes(String(q).slice(0,60).toLowerCase()))).slice(0,30).map(clean):[],limit:5000};
  }
  async function slot(client,ownerId,parentId,position,lockSettings=false){
-  const o=await owner(client,ownerId);if(!['Left','Right'].includes(position))fail('Choose Earth or Sky');
+  const o=await owner(client,ownerId);if(!o.permissions.includes('registration'))fail('Registration Center is not enabled for this member',403);if(!['Left','Right'].includes(position))fail('Choose Earth or Sky');
   const setting=position==='Left'?'earth':'sky', settings=await readRegistrationSettings(client,lockSettings);
   if(!settings[setting])fail((position==='Left'?'Earth':'Sky')+' registration is disabled',409);
   const all=await descendants(client,ownerId),parent=all.find(n=>Number(n.id)===id(parentId));if(!parent)fail('Placement must be inside your own network',403);if(parent.status!=='Active')fail('This placement parent is inactive');

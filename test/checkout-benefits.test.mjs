@@ -10,7 +10,7 @@ async function req(path,method='GET',data,cookie=adminCookie){return fetch(base+
 async function jsonOk(response,status=200){assert.equal(response.status,status,await response.clone().text());return response.json();}
 const create=async(kind,input)=>jsonOk(await req('/api/records/'+kind,'POST',input),201);
 const registration=(username,extra={})=>({firstName:'Checkout',lastName:'Fixture',username,email:username+'@example.test',phone:'9800000000',password:'chosen6',confirmation:'chosen6',location,...extra});
-async function register(username,extra={}){const r=await req('/api/cart/register','POST',registration(username,extra),null);const user=await jsonOk(r,201);return {user,cookie:r.headers.get('set-cookie').split(';')[0]};}
+async function register(username,extra={}){const r=await req('/api/cart/register','POST',registration(username,extra),null);const user=await jsonOk(r,201);await db.query("UPDATE member_profiles SET permissions=permissions || '[\"discount\"]'::jsonb WHERE user_id=$1",[user.id]);return {user,cookie:r.headers.get('set-cookie').split(';')[0]};}
 const cart=(extra={})=>({items:[{productId:product.id,quantity:2}],channel:'discount',useBenefits:true,...extra});
 async function quote(input,cookie=a.cookie){return jsonOk(await req('/api/member/quote','POST',input,cookie));}
 const orderInput=(q,input,key)=>({...input,quoteHash:q.quoteHash,centerId:center.id,recipient:'Checkout Fixture',phone:'9800000000',address:'Fixture address',requestKey:key,paymentStatus:'Paid',amount:.01});

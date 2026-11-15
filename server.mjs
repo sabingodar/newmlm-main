@@ -1,3 +1,4 @@
+import {profileMenus,requireMemberMenu,requireShopMenu} from './src/member-menu.mjs';
 import {registrationDefaults,validateRegistrationSettings} from './src/registration-settings.mjs';
 import {replaceMemberPaymentSlip,sendPaymentSlip} from './src/order-payment-slips.mjs';
 import {createOrderPaymentReview} from './src/order-payment-review.mjs';
@@ -56,6 +57,13 @@ const repository=createRepository(db),auth=createAuth(db,username),adminUsers=cr
 const networkCommissions=createNetworkCommissions(db),rankRewards=createRankRewards(db),memberEarnings=createMemberEarnings(db);
 const centerManagement=createCenters(db,repository),inventory=createInventory(db),transferCorrections=createTransferCorrections(db),dispatchCommissions=createDispatchCommissions(db);
 const members=createMembers(db),memberAuth=createMemberAuth(db),binaryTree=createBinaryTree(db),commerce=createCommerce(db),teamLists=createTeamLists(db);
+async function requireMemberOrderPayment(member,id){
+  if(member.must_change_password)fail('Ordering is unavailable for this account',403);
+  if(member.permissions.includes('orders'))return;
+  const order=await commerce.order(member.user_id,id);
+  requireShopMenu(member,order.channel||'retail');
+}
+
 const regions=createRegions(db);
 const categories=createCategories(db);
 const storefront=createStorefront(db);
@@ -112,23 +120,23 @@ const server=http.createServer(async(req,res)=>{
       const memberSlipRoute=path.match(/^\/api\/payments\/orders\/([1-9]\d{0,15})\/slip$/);
       if(memberSlipRoute){
         const member=await memberAuth.session(req.headers.cookie),id=memberSlipRoute[1];
-        if(member.must_change_password||!member.permissions.includes('orders'))fail('Orders are unavailable for this account',403);
+        await requireMemberOrderPayment(member,id);
         if(!Number.isSafeInteger(Number(id)))fail('Invalid order');
         if(req.method==='GET')return await sendPaymentSlip(db,res,id,member.user_id);
         if(req.method==='POST')return json(res,200,await replaceMemberPaymentSlip(db,member.user_id,id,await body(req)));
         fail('Method not allowed',405);
       }
-      if((path.startsWith('/api/payments/orders/')&&/^[0-9]+$/.test(path.split('/')[4])&&['start','verify'].includes(path.split('/')[5])&&path.split('/').length===6)&&req.method==='POST'){const m=await memberAuth.session(req.headers.cookie);if(m.must_change_password||!m.permissions.includes('orders'))fail('Ordering is unavailable for this account',403);const parts=path.split('/');return json(res,200,await payments[parts[5]==='start'?'start':'verifyOrder'](m.user_id,Number(parts[4])));}
+      if((path.startsWith('/api/payments/orders/')&&/^[0-9]+$/.test(path.split('/')[4])&&['start','verify'].includes(path.split('/')[5])&&path.split('/').length===6)&&req.method==='POST'){const m=await memberAuth.session(req.headers.cookie);const parts=path.split('/');await requireMemberOrderPayment(m,parts[4]);return json(res,200,await payments[parts[5]==='start'?'start':'verifyOrder'](m.user_id,Number(parts[4])));}
       if(path.startsWith('/api/cart/')){
         let member=null;try{member=await memberAuth.session(req.headers.cookie);}catch(e){if(e.status!==401)throw e;}
         if(path==='/api/cart/context'&&req.method==='GET'){
           const data=await commerce.catalog('retail'),info=member?await members.detail(member.user_id):null;
-          return json(res,200,{member:info?{id:Number(member.user_id),name:info.user.name,username:info.user.username,email:info.user.email,phone:info.user.phone,location:info.user.location,mustChangePassword:member.must_change_password,canOrder:member.permissions.includes('orders')}:null,paymentOptions:await payments.options(),centers:data.centers,products:data.items.map(({dispatchCommission,regionalCommissions,rankCommissions,...p})=>p),rewards:member?await benefits.account(member.user_id):{balance:0,items:[]},rewardSettings:(await settings()).rewardRedemption});
+          return json(res,200,{member:info?{id:Number(member.user_id),name:info.user.name,username:info.user.username,email:info.user.email,phone:info.user.phone,location:info.user.location,mustChangePassword:member.must_change_password,canOrder:member.permissions.includes('products')}:null,paymentOptions:await payments.options(),centers:data.centers,products:data.items.map(({dispatchCommission,regionalCommissions,rankCommissions,...p})=>p),rewards:member?await benefits.account(member.user_id):{balance:0,items:[]},rewardSettings:(await settings()).rewardRedemption});
         }
         if(path==='/api/cart/register'&&req.method==='POST'){const result=await shopRegister(await body(req),req.socket.remoteAddress);return json(res,201,{ok:true,id:result.id,username:result.username},{'Set-Cookie':`member_session=${result.token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${production?'; Secure':''}`});}
         if(path==='/api/cart/quote'&&req.method==='POST'){const input=await body(req),quote=await commerce.quote({...input,channel:'retail',useBenefits:true},member?.user_id);return json(res,200,{...quote,items:quote.items.map(({commissionSettings,rewardSettings,shareAttribution,...line})=>line)});}
         if(path==='/api/cart/checkout-result'&&req.method==='GET'){if(!member)fail('Sign in to view this order',401);const key=url.searchParams.get('requestKey')||'';if(!/^[a-zA-Z0-9_-]{8,100}$/.test(key))fail('Invalid checkout reference');const previous=(await db.query('SELECT order_id FROM member_checkouts WHERE user_id=$1 AND request_key=$2',[member.user_id,key])).rows[0];if(!previous)fail('Order has not been recorded',404);return json(res,200,await commerce.order(member.user_id,previous.order_id));}
-        if(path==='/api/cart/checkout'&&req.method==='POST'){if(!member)fail('Sign in or register to complete checkout',401);if(member.must_change_password)fail('Change your temporary password in My Account first',403);if(!member.permissions.includes('orders'))fail('Orders are not enabled for your account',403);return json(res,201,await commerce.checkout(member.user_id,{...await body(req),channel:'retail',useBenefits:true}));}
+        if(path==='/api/cart/checkout'&&req.method==='POST'){if(!member)fail('Sign in or register to complete checkout',401);if(member.must_change_password)fail('Change your temporary password in My Account first',403);requireMemberMenu(member,'products');return json(res,201,await commerce.checkout(member.user_id,{...await body(req),channel:'retail',useBenefits:true}));}
         fail('Not found',404);
       }
       if(path==='/api/inquiry'&&req.method==='POST'){
@@ -146,28 +154,61 @@ const server=http.createServer(async(req,res)=>{
         const member=await memberAuth.session(req.headers.cookie);
         if(path==='/api/member/logout'&&req.method==='POST'){await db.query('DELETE FROM member_sessions WHERE token=$1',[member.token]);return json(res,200,{ok:true},{'Set-Cookie':'member_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'});}
         if(path==='/api/member/session'&&req.method==='GET')return json(res,200,{id:Number(member.user_id),name:member.data.name,username:member.data.username||member.data.legacyUsername,coordinatorAssignments:await regions.assignments(member.user_id),permissions:member.permissions,mustChangePassword:member.must_change_password,branding:await publicSettings()});
-        if(path==='/api/member/password'&&req.method==='POST')return json(res,200,await memberAuth.changePassword(member,await body(req)));
+        if(path==='/api/member/password'&&req.method==='POST'){
+          if(!member.must_change_password)requireMemberMenu(member,'password');
+          return json(res,200,await memberAuth.changePassword(member,await body(req)));
+        }
         if(member.must_change_password)fail('Change your temporary password before accessing the member dashboard',403);
-        if(path==='/api/member/regions'&&req.method==='GET')return json(res,200,await regions.report(member.user_id,Object.fromEntries(url.searchParams)));
+        if(path==='/api/member/regions'&&req.method==='GET'){
+          requireMemberMenu(member,'regions');
+          return json(res,200,await regions.report(member.user_id,Object.fromEntries(url.searchParams)));
+        }
         if(path==='/api/member/address'&&req.method==='POST'){
+          requireMemberMenu(member,'profile');
           const input=await body(req),location=locationOf(input.location);
           await db.transaction(async c=>{const row=(await c.query("SELECT * FROM records WHERE id=$1 AND kind='users' FOR UPDATE",[member.user_id])).rows[0];if(input.version!==row.version)fail('Profile changed. Refresh before saving.',409);await c.query('UPDATE records SET data=$1,version=version+1,updated_at=now() WHERE id=$2',[{...row.data,location,country:'NP'},member.user_id]);await persistLocation(c,member.user_id,location);await c.query("INSERT INTO audit(action,kind,record_id,details) VALUES('Member updated regional address','users',$1,$2)",[member.user_id,{location}]);});return json(res,200,{ok:true});
         }
-        if(['/api/member/tree','/api/member/tree-invite','/api/member/tree-create'].includes(path)){
-          if(!member.permissions.includes('profile'))fail('Member network access is not enabled',403);
-          if(path==='/api/member/tree'&&req.method==='GET')return json(res,200,await binaryTree.tree(member.user_id,url.searchParams.get('username')||'',url.searchParams.get('q')||''));
-          if(path==='/api/member/tree-invite'&&req.method==='POST')return json(res,201,await binaryTree.invite(member.user_id,await body(req)));
-          if(path==='/api/member/tree-create'&&req.method==='POST')return json(res,201,await binaryTree.register(member.user_id,await body(req),{ip:req.socket.remoteAddress}));
-          fail('Method not allowed',405);
+        if(path==='/api/member/tree'&&req.method==='GET'){
+          const registration=url.searchParams.get('view')==='registration';
+          requireMemberMenu(member,registration?'registration':'team');
+          const tree=await binaryTree.tree(member.user_id,registration?'':url.searchParams.get('username')||'',registration?'':url.searchParams.get('q')||'');
+          return json(res,200,registration?{...tree,nodes:[],matches:[],parent:null}:tree);
         }
-        if(path==='/api/member/team-list'&&req.method==='GET'){if(!member.permissions.includes('profile'))fail('Network menu is not enabled',403);return json(res,200,await teamLists.list(member.user_id,url.searchParams.get('side'),Object.fromEntries(url.searchParams)));}
-        if(path==='/api/member/shop'&&req.method==='GET'){const catalog=await commerce.catalog(url.searchParams.get('channel')||'retail');return json(res,200,{...catalog,paymentOptions:await payments.options(),...(catalog.channel==='discount'?{rewards:await benefits.account(member.user_id)}:{})});}
-        if(path==='/api/member/quote'&&req.method==='POST'){if(!member.permissions.includes('orders'))fail('Orders menu is not enabled',403);return json(res,200,await commerce.quote(await body(req),member.user_id));}
-        if(path==='/api/member/checkout'&&req.method==='POST'){if(!member.permissions.includes('orders'))fail('Orders menu is not enabled',403);return json(res,201,await commerce.checkout(member.user_id,await body(req)));}
-        if(path==='/api/member/order'&&req.method==='GET'){if(!member.permissions.includes('orders'))fail('Orders menu is not enabled',403);return json(res,200,await commerce.order(member.user_id,url.searchParams.get('id')));}
-        if(path==='/api/member/track-order'&&req.method==='GET'){if(!member.permissions.includes('orders'))fail('Orders menu is not enabled',403);return json(res,200,await commerce.track(member.user_id,url.searchParams.get('reference')));}
+        if(path==='/api/member/tree-invite'&&req.method==='POST')return json(res,201,await binaryTree.invite(member.user_id,await body(req)));
+        if(path==='/api/member/tree-create'&&req.method==='POST')return json(res,201,await binaryTree.register(member.user_id,await body(req),{ip:req.socket.remoteAddress}));
+        if(path==='/api/member/team-list'&&req.method==='GET'){
+          const side=url.searchParams.get('side');
+          if(!['Left','Right'].includes(side))fail('Choose Earth or Sky');
+          requireMemberMenu(member,side==='Left'?'earth':'sky');
+          return json(res,200,await teamLists.list(member.user_id,side,Object.fromEntries(url.searchParams)));
+        }
+        if(path==='/api/member/shop'&&req.method==='GET'){
+          const channel=url.searchParams.get('channel')||'retail';
+          requireShopMenu(member,channel);
+          const catalog=await commerce.catalog(channel);
+          return json(res,200,{...catalog,paymentOptions:await payments.options(),...(channel==='discount'?{rewards:await benefits.account(member.user_id)}:{})});
+        }
+        if(['/api/member/quote','/api/member/checkout'].includes(path)&&req.method==='POST'){
+          const input=await body(req);
+          requireShopMenu(member,input.channel);
+          const checkout=path.endsWith('/checkout');
+          return json(res,checkout?201:200,checkout?await commerce.checkout(member.user_id,input):await commerce.quote(input,member.user_id));
+        }
+        if(path==='/api/member/order'&&req.method==='GET'){
+          requireMemberMenu(member,'orders');
+          return json(res,200,await commerce.order(member.user_id,url.searchParams.get('id')));
+        }
+        if(path==='/api/member/track-order'&&req.method==='GET'){
+          requireMemberMenu(member,'tracking');
+          return json(res,200,await commerce.track(member.user_id,url.searchParams.get('reference')));
+        }
         if(req.method!=='GET')fail('Method not allowed',405);
-        const resource=path.split('/').pop();if(!member.permissions.includes(resource))fail('This menu is not enabled for your account',403);
+        const resource=path.split('/').pop();
+        if(resource==='profile'){
+          const menu=url.searchParams.get('menu')||'profile';
+          if(!profileMenus.includes(menu))fail('Invalid member profile context');
+          requireMemberMenu(member,menu);
+        }else requireMemberMenu(member,resource);
         if(['orders','deposits','withdrawals'].includes(resource))return json(res,200,await members.related(member.user_id,resource,url.searchParams.get('page')||1));
         if(resource==='ledger'){const [account,items,total]=await Promise.all([db.query('SELECT opening_balance,balance FROM member_accounts WHERE user_id=$1',[member.user_id]),db.query('SELECT * FROM member_ledger WHERE user_id=$1 ORDER BY id DESC LIMIT 20',[member.user_id]),db.query('SELECT count(*) FROM member_ledger WHERE user_id=$1',[member.user_id])]);return json(res,200,{account:account.rows[0],items:items.rows,total:Number(total.rows[0].count)});}
         if(resource==='notifications')return json(res,200,(await db.query('SELECT id,title,message,created_at FROM member_notifications WHERE user_id=$1 ORDER BY id DESC LIMIT 30',[member.user_id])).rows);

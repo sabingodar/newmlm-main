@@ -1,3 +1,4 @@
+import {memberMenus} from './member-menu.mjs';
 import {visibleOrderPaymentData} from './order-payment-review.mjs';
 import {randomBytes,scrypt} from 'node:crypto';
 import {promisify} from 'node:util';
@@ -5,7 +6,7 @@ import {fail} from './validation.mjs';
 import {record} from './repository.mjs';
 import {locationOf,persistLocation} from './geography.mjs';
 const derive=promisify(scrypt);
-export const memberPermissions=['profile','orders','deposits','withdrawals','ledger','notifications'];
+export const memberPermissions=Object.keys(memberMenus);
 const usernameOf=data=>data.username||data.legacyUsername||'';
 const numberId=value=>{if(!/^\d+$/.test(String(value))||!Number.isSafeInteger(Number(value))||Number(value)<1)fail('Invalid member ID');return Number(value);};
 const text=(value,max=500)=>{const result=String(value??'').trim();if(result.length>max)fail('Field is too long');return result;};
@@ -36,7 +37,7 @@ export function createMembers(db) {
     const activity=(await db.query("SELECT id,action,details,created_at AS created FROM audit WHERE kind='users' AND record_id=$1 ORDER BY id DESC LIMIT 30",[u.id])).rows;
     const rank=p.affiliate_rank_id?(await db.query("SELECT id,data FROM records WHERE kind='affiliates' AND id=$1",[p.affiliate_rank_id])).rows[0]:null;
     const relation=async rid=>rid?(await db.query("SELECT id,data->>'name' AS name,COALESCE(NULLIF(data->>'username',''),data->>'legacyUsername') AS username FROM records WHERE kind='users' AND id=$1",[rid])).rows[0]:null;
-    return {user:{...record(u),username:usernameOf(u.data)},profile:p,account,rank:rank?{id:Number(rank.id),...rank.data}:null,referrer:await relation(p.referrer_id),parent:await relation(p.parent_id),totals:{...totals,orders:orders.total,referrals,transactions:Number((await db.query('SELECT count(*) FROM member_ledger WHERE user_id=$1',[u.id])).rows[0].count)},orders,deposits,withdrawals,ledger,activity,
+    return {menuPermissions:memberMenus,user:{...record(u),username:usernameOf(u.data)},profile:p,account,rank:rank?{id:Number(rank.id),...rank.data}:null,referrer:await relation(p.referrer_id),parent:await relation(p.parent_id),totals:{...totals,orders:orders.total,referrals,transactions:Number((await db.query('SELECT count(*) FROM member_ledger WHERE user_id=$1',[u.id])).rows[0].count)},orders,deposits,withdrawals,ledger,activity,
       hasPassword:!!(await db.query('SELECT user_id FROM member_credentials WHERE user_id=$1',[u.id])).rowCount,
       logins:(await db.query('SELECT id,ip,user_agent,success,created_at FROM member_login_history WHERE user_id=$1 ORDER BY id DESC LIMIT 30',[u.id])).rows,
       localReferrals:(await db.query("SELECT r.id,r.data->>'name' AS name,COALESCE(NULLIF(r.data->>'username',''),r.data->>'legacyUsername') AS username,r.data->>'status' AS status,COALESCE(NULLIF(r.data->>'legacyJoinedAt',''),r.created_at::text) AS joined FROM member_profiles p JOIN records r ON r.id=p.user_id WHERE p.referrer_id=$1 ORDER BY r.id DESC LIMIT 100",[u.id])).rows,
@@ -88,7 +89,7 @@ export function createMembers(db) {
         for(const [column,rid] of [['referrer_id',referrerId],['parent_id',parentId]]){if(!rid)continue;await user(client,rid);if(rid===Number(u.id))fail('A member cannot refer or parent themselves');const cycle=await client.query(`WITH RECURSIVE chain AS (SELECT user_id,${column} AS next FROM member_profiles WHERE user_id=$1 UNION SELECT p.user_id,p.${column} FROM member_profiles p JOIN chain c ON p.user_id=c.next) SELECT 1 FROM chain WHERE user_id=$2`,[rid,u.id]);if(cycle.rowCount)fail('This relationship would create a cycle');}
         await client.query('UPDATE member_profiles SET referrer_id=$1,parent_id=$2,position=$3 WHERE user_id=$4',[referrerId,parentId,position,u.id]);await bump(client,u.id);await audit(client,u.id,'Updated member relationships',{referrerId,parentId,position});
       }
-      else if(kind==='permissions'){if(!Array.isArray(input.permissions)||input.permissions.some(p=>!memberPermissions.includes(p)))fail('Invalid member portal permissions');await client.query('UPDATE member_profiles SET permissions=$1 WHERE user_id=$2',[JSON.stringify([...new Set(input.permissions)]),u.id]);await audit(client,u.id,'Updated member portal permissions',{permissions:input.permissions});}
+      else if(kind==='permissions'){await checkVersion(u,input);if(!Array.isArray(input.permissions)||input.permissions.some(p=>!memberPermissions.includes(p)))fail('Invalid member portal permissions');await client.query('UPDATE member_profiles SET permissions=$1 WHERE user_id=$2',[JSON.stringify([...new Set(input.permissions)]),u.id]);await bump(client,u.id);await audit(client,u.id,'Updated member portal permissions',{permissions:input.permissions});}
       else if(kind==='notifications'){const title=text(input.title,150),message=text(input.message,4000);if(!title||!message)fail('Title and message are required');await client.query('INSERT INTO member_notifications(user_id,title,message,actor) VALUES($1,$2,$3,$4)',[u.id,title,message,actor]);await audit(client,u.id,'Created internal member notification');}
       else fail('Unknown member action',404);
       return {ok:true};
