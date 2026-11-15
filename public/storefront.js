@@ -8,16 +8,32 @@ const markup=window.createStorefrontMarkup({esc,money,icon,heroMarkup:window.her
 const {productCard,blogCard,testimonial}=markup;
 window.mountStorefront=async()=>{const incomingShare=new URLSearchParams(location.search).get('share');
  const root=document.querySelector('#app'),data=await api('storefront'),s=data.settings,c=data.content,path=location.pathname;
+ const managementPage=markup.managementPage(data,path);
  const nav=[['/','Home'],...(data.about?[['/about','About']]:[]),['/products','Products'],['/blog','Blog'],['/franchise','Become a Franchise Partner'],['/contact','Contact'],['/track-order','Track Order']];
- document.title=(path==='/'?(s.seoTitle||s.siteName):({ '/terms-and-conditions':'Terms and Conditions','/privacy-policy':'Privacy Policy','/products':'Products','/about':'About Us','/blog':'Blog','/franchise':'Become a Franchise Partner','/contact':'Contact','/testimonials':'Testimonial','/track-order':'Track Order','/cart':'Shopping Cart','/checkout':'Checkout' }[path]||'Blog'))+' · '+(path==='/'?'Shop & Discover':s.siteName);document.querySelector('meta[name=description]').content=s.seoDescription||s.tagline;
- if(!root.querySelector('[data-server-home],[data-information-rendered],[data-about-rendered]'))root.innerHTML=markup.frame(data,path);else root.querySelector('[data-server-home]')?.removeAttribute('data-server-home');
- root.querySelector('#sf-menu-toggle').onclick=e=>{const nav=root.querySelector('#sf-navigation'),open=nav.classList.toggle('open');e.currentTarget.setAttribute('aria-expanded',String(open));};
+ document.title=(path==='/'?(s.seoTitle||s.siteName):managementPage?.title||({ '/terms-and-conditions':'Terms and Conditions','/privacy-policy':'Privacy Policy','/products':'Products','/about':'About Us','/blog':'Blog','/franchise':'Become a Franchise Partner','/contact':'Contact','/testimonials':'Testimonial','/track-order':'Track Order','/cart':'Shopping Cart','/checkout':'Checkout' }[path]||'Blog'))+' · '+(path==='/'?'Shop & Discover':s.siteName);document.querySelector('meta[name=description]').content=s.seoDescription||s.tagline;
+ if(!root.querySelector('[data-server-home],[data-information-rendered],[data-about-rendered],[data-management-rendered]'))root.innerHTML=markup.frame(data,path);else root.querySelector('[data-server-home]')?.removeAttribute('data-server-home');
  const header=root.querySelector('.sf-header');window.dlsHeaderScrollAbort?.abort();window.dlsHeaderScrollAbort=new AbortController();const topButton=root.querySelector('.sf-back-to-top');topButton.onclick=()=>{window.scrollTo({top:0,left:0,behavior:'instant'});root.querySelector('.sf-logo').focus({preventScroll:true});};const updateHeader=()=>{header.classList.toggle('is-scrolled',window.scrollY>24);if(window.scrollY>320)topButton.hidden=false;else if(document.activeElement!==topButton)topButton.hidden=true;};topButton.addEventListener('blur',updateHeader);window.addEventListener('scroll',updateHeader,{passive:true,signal:window.dlsHeaderScrollAbort.signal});updateHeader();
+ const menuToggle = root.querySelector('#sf-menu-toggle');
+ const navigation = root.querySelector('#sf-navigation');
+ const managementMenu = navigation.querySelector('.sf-management-menu');
+ const setMenuOpen = open => {
+  if (!open) managementMenu.open = false;
+  navigation.classList.toggle('open', open);
+  menuToggle.setAttribute('aria-expanded', String(open));
+ };
+ menuToggle.onclick = () => setMenuOpen(!navigation.classList.contains('open'));
+ document.addEventListener('click', event => {
+  if (managementMenu.open && !managementMenu.contains(event.target)) managementMenu.open = false;
+  if (navigation.classList.contains('open') && !navigation.contains(event.target) && !menuToggle.contains(event.target)) {
+   setMenuOpen(false);
+  }
+ }, {capture: true, signal: window.dlsHeaderScrollAbort.signal});
  let accountVersion=0;const account=root.querySelector('.sf-account');window.setStorefrontAccount=(signedIn,dashboardUrl)=>{accountVersion++;window.refreshProductSharing?.();account.href=signedIn?(dashboardUrl==='/admin/dashboard'?'/admin/dashboard':'/member#dashboard'):'/member';account.setAttribute('aria-label',signedIn?'Dashboard':'My Account');account.innerHTML=icon(signedIn?'dashboard':'users')+'<span>'+(signedIn?'Dashboard':'My Account')+'</span>';};const syncAccount=async()=>{const version=++accountVersion;try{const state=await api('account-status');if(version===accountVersion)window.setStorefrontAccount(state.authenticated,state.dashboardUrl);}catch{}};window.refreshStorefrontAccount=syncAccount;syncAccount();const accountSignal=window.dlsHeaderScrollAbort.signal;window.addEventListener('pageshow',syncAccount,{signal:accountSignal});window.addEventListener('focus',syncAccount,{signal:accountSignal});window.addEventListener('storage',e=>{if(e.key==='dls-auth-event')syncAccount();},{signal:accountSignal});document.addEventListener('visibilitychange',()=>{if(!document.hidden)syncAccount();},{signal:accountSignal});
  const main=root.querySelector('#sf-main');
  if(path==='/cart'||path==='/checkout')await window.mountShopCheckout({main,api,esc,money});
  else if(path==='/products')await home(main,data,true);
  else if(path==='/'){await home(main,data);await window.captureProductShare?.(incomingShare);}
+ else if(managementPage){if(!main.hasAttribute('data-management-rendered'))main.innerHTML=managementPage.html;main.removeAttribute('data-management-rendered');}
  else if(path==='/about'){if(!main.hasAttribute('data-about-rendered'))main.innerHTML=window.aboutDetailMarkup(data,esc);else main.removeAttribute('data-about-rendered');window.bindAboutSlider(main);window.bindHeroVideo(main);}
  else if(['/terms-and-conditions','/privacy-policy'].includes(path)||path.startsWith('/pages/')){const slug=path.startsWith('/pages/')?path.slice(7):path.slice(1),page=data.legalPages?.find(p=>p.slug===slug);if(!main.hasAttribute('data-information-rendered'))main.innerHTML=markup.informationPage(page,s);else main.removeAttribute('data-information-rendered');document.title=(page?.title||'Page unavailable')+' · '+s.siteName;}
  else if(path==='/blog')journal(main,data);

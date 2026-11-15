@@ -17,3 +17,10 @@ export function renderHomeResponse(markup,data,products,productPath,path='/'){
 export function renderInformationResponse(markup,data,page,path){const frame=renderer.frame(data,path).replace('<main id="sf-main"></main>',()=>'<main id="sf-main" data-information-rendered="true">'+renderer.informationPage(page,data.settings)+'</main>');return markup.replace(/<div class="instant-page">[\s\S]*?<\/main><\/div>/,()=>frame);}
 
 export function renderAboutResponse(markup,data){const frame=renderer.frame(data,'/about').replace('<main id="sf-main"></main>',()=>'<main id="sf-main" data-about-rendered="true">'+context.window.aboutDetailMarkup(data,esc)+'</main>');return markup.replace(/<div class="instant-page">[\s\S]*?<\/main><\/div>/,()=>frame);}
+
+export function renderManagementResponse(markup,data,path) {
+ const page = renderer.managementPage(data,path);
+ const frame = renderer.frame(data,path).replace('<main id="sf-main"></main>', () => '<main id="sf-main" data-management-rendered="true">' + page.html + '</main>');
+ return markup.replace(/<title>[^<]*<\/title>/, () => '<title>' + esc(page.title + ' · ' + data.settings.siteName) + '</title>')
+  .replace(/<div class="instant-page">[\s\S]*?<\/main><\/div>/, () => frame);
+}
