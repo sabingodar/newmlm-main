@@ -1,3 +1,4 @@
+import {registrationDefaults,validateRegistrationSettings} from './src/registration-settings.mjs';
 import {replaceMemberPaymentSlip,sendPaymentSlip} from './src/order-payment-slips.mjs';
 import {createOrderPaymentReview} from './src/order-payment-review.mjs';
 import {createCrmLeads} from './src/crm-leads.mjs';
@@ -70,9 +71,9 @@ async function body(req) {
   for await(const chunk of req){size+=chunk.length;if(size>10485760)fail('Request too large',413);chunks.push(chunk);}
   try{return JSON.parse(Buffer.concat(chunks).toString());}catch{fail('Invalid JSON');}
 }
-async function settings(){return {...contentDefaults,rewardRedemption:rewardsDefaults,storefront:storefrontDefaults,management:managementDefaults,productCommissionDefaults:commissionDefaults,...(await db.query('SELECT data FROM settings WHERE id=1')).rows[0].data};}
-async function publicSettings(){const {productCommissionDefaults,storefront,aboutPage:privateAbout,legalPages:privateLegal,management,...branding}=await settings();return branding;}
-async function publicStorefrontData(){const [all,overview]=await Promise.all([settings(),storefront.overview()]);const {productCommissionDefaults,storefront:content,aboutPage:privateAbout,legalPages:privateLegal,management,...branding}=all;return {settings:branding,content:publishedStorefront(content),management,about:publicAbout(all),legalPages:publicLegalPages(all),...overview};}
+async function settings(){return {...contentDefaults,rewardRedemption:rewardsDefaults,storefront:storefrontDefaults,management:managementDefaults,registrationSettings:registrationDefaults,productCommissionDefaults:commissionDefaults,...(await db.query('SELECT data FROM settings WHERE id=1')).rows[0].data};}
+async function publicSettings(){const {productCommissionDefaults,storefront,aboutPage:privateAbout,legalPages:privateLegal,management,registrationSettings,...branding}=await settings();return branding;}
+async function publicStorefrontData(){const [all,overview]=await Promise.all([settings(),storefront.overview()]);const {productCommissionDefaults,storefront:content,aboutPage:privateAbout,legalPages:privateLegal,management,registrationSettings,...branding}=all;return {settings:branding,content:publishedStorefront(content),management,about:publicAbout(all),legalPages:publicLegalPages(all),...overview};}
 const server=http.createServer(async(req,res)=>{
   res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('X-Frame-Options','DENY');res.setHeader('Referrer-Policy','same-origin');
   res.setHeader('Content-Security-Policy',"default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; frame-src https://www.youtube-nocookie.com https://www.google.com https://maps.google.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self' https://epay.esewa.com.np https://rc-epay.esewa.com.np");
@@ -323,6 +324,7 @@ const server=http.createServer(async(req,res)=>{
           const input=await body(req);if(!can(actor,'settings.manage')&&(!can(actor,'benefits.manage')||Object.keys(input).some(k=>k!=='rewardRedemption')))fail('Your role cannot change website settings',403);if(input.rewardRedemption!==undefined&&!can(actor,'benefits.manage'))fail('Reward settings access is not enabled',403);const result=await db.transaction(async c=>{
             const current=(await c.query('SELECT data FROM settings WHERE id=1 FOR UPDATE')).rows[0].data,result=validateContent(input,current);
             if(input.productCommissionDefaults!==undefined)result.productCommissionDefaults=await commissions(c,input.productCommissionDefaults);
+            if(input.registrationSettings!==undefined)result.registrationSettings=validateRegistrationSettings(input.registrationSettings);
             if(input.management!==undefined)result.management=await validateManagement(c,input.management);
             if(input.storefront!==undefined)result.storefront=await validateStorefront(c,{...storefrontDefaults,...current.storefront,...input.storefront});
             if(input.rewardRedemption!==undefined){result.rewardRedemption=validateRewards(input.rewardRedemption,current.rewardRedemption);await validateRewardCategories(c,result.rewardRedemption);}

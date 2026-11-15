@@ -1,3 +1,4 @@
+import {readRegistrationSettings} from './registration-settings.mjs';
 import {randomBytes,scrypt} from 'node:crypto';
 import {promisify} from 'node:util';
 import {digest} from './auth.mjs';
@@ -17,15 +18,18 @@ export function createBinaryTree(db){
   const nodes=[];const visit=(n,depth,path)=>{nodes.push({...clean(n),depth,path});if(depth<3)for(const [side,symbol] of [['Left','L'],['Right','R']]){const c=children.get(Number(n.id))?.[side];if(c)visit(c,depth+1,path+symbol);}};visit(root,0,'');
   const next=side=>{let cursor=root;const visited=new Set();while(cursor&&!visited.has(Number(cursor.id))){visited.add(Number(cursor.id));const child=children.get(Number(cursor.id))?.[side];if(child){cursor=child;continue;}return childrenKnown(cursor)&&cursor.status==='Active'?{parentId:Number(cursor.id),parentUsername:cursor.username,position:side}:null;}return null;};
   const branchCount=side=>{const c=children.get(Number(root.id))?.[side];if(!c)return 0;return all.filter(n=>{let cursor=n;while(cursor&&Number(cursor.id)!==Number(c.id))cursor=byId.get(Number(cursor.parent_id));return !!cursor;}).length;};
-  return {owner:clean(byId.get(Number(ownerId))),root:clean(root),nodes,next:{Left:next('Left'),Right:next('Right')},summary:{earth:branchCount('Left'),sky:branchCount('Right')},parent:root.parent_id&&byId.has(Number(root.parent_id))?clean(byId.get(Number(root.parent_id))):null,matches:q?all.filter(n=>[n.username,n.name].some(s=>s?.toLowerCase().includes(String(q).slice(0,60).toLowerCase()))).slice(0,30).map(clean):[],limit:5000};
+  const registrationSettings=await readRegistrationSettings(db);
+  return {registrationSettings,owner:clean(byId.get(Number(ownerId))),root:clean(root),nodes,next:{Left:registrationSettings.earth?next('Left'):null,Right:registrationSettings.sky?next('Right'):null},summary:{earth:branchCount('Left'),sky:branchCount('Right')},parent:root.parent_id&&byId.has(Number(root.parent_id))?clean(byId.get(Number(root.parent_id))):null,matches:q?all.filter(n=>[n.username,n.name].some(s=>s?.toLowerCase().includes(String(q).slice(0,60).toLowerCase()))).slice(0,30).map(clean):[],limit:5000};
  }
- async function slot(client,ownerId,parentId,position){
+ async function slot(client,ownerId,parentId,position,lockSettings=false){
   const o=await owner(client,ownerId);if(!['Left','Right'].includes(position))fail('Choose Earth or Sky');
+  const setting=position==='Left'?'earth':'sky', settings=await readRegistrationSettings(client,lockSettings);
+  if(!settings[setting])fail((position==='Left'?'Earth':'Sky')+' registration is disabled',409);
   const all=await descendants(client,ownerId),parent=all.find(n=>Number(n.id)===id(parentId));if(!parent)fail('Placement must be inside your own network',403);if(parent.status!=='Active')fail('This placement parent is inactive');
   if(all.some(n=>Number(n.parent_id)===Number(parent.id)&&n.position===position))fail('This position is already occupied. Refresh the tree.',409);
   if(!childrenKnown(parent))fail('This branch has not been imported completely. Ask administration to verify the position.',409);return {o,parent};
  }
- async function invite(ownerId,input){const token=randomBytes(32).toString('hex');await db.transaction(async c=>{await c.query('SELECT pg_advisory_xact_lock(76241905)');await slot(c,ownerId,input.parentId,input.position);await c.query('INSERT INTO member_referral_invites(token,owner_id,parent_id,position) VALUES($1,$2,$3,$4)',[digest(token),ownerId,input.parentId,input.position]);});return {token,expiresInDays:7};}
+ async function invite(ownerId,input){const token=randomBytes(32).toString('hex');await db.transaction(async c=>{await c.query('SELECT pg_advisory_xact_lock(76241905)');await slot(c,ownerId,input.parentId,input.position,true);await c.query('INSERT INTO member_referral_invites(token,owner_id,parent_id,position) VALUES($1,$2,$3,$4)',[digest(token),ownerId,input.parentId,input.position]);});return {token,expiresInDays:7};}
  async function invitation(token,client=db,lock=false){if(!/^[a-f0-9]{64}$/.test(String(token)))fail('Invalid invitation',404);const r=(await client.query('SELECT * FROM member_referral_invites WHERE token=$1 AND expires_at>now() AND used_by IS NULL'+(lock?' FOR UPDATE':''),[digest(token)])).rows[0];if(!r)fail('Invitation has expired or has already been used',410);return r;}
  async function inviteInfo(token){const i=await invitation(token);const {o,parent}=await slot(db,i.owner_id,i.parent_id,i.position);return {referrer:username(o.data),parent:parent.username,position:i.position,expiresAt:i.expires_at};}
  async function register(ownerId,input,{token,ip='local'}={}){
@@ -36,7 +40,7 @@ export function createBinaryTree(db){
   const salt=randomBytes(16).toString('hex'),hash=(await derive(input.password,salt,64)).toString('hex');
   const location=locationOf(input.location);
   return db.transaction(async c=>{await c.query('SELECT pg_advisory_xact_lock(76241905)');let invitationRow;if(token){invitationRow=await invitation(token,c,true);ownerId=invitationRow.owner_id;input={...input,parentId:invitationRow.parent_id,position:invitationRow.position};}
-   const {o,parent}=await slot(c,ownerId,input.parentId,input.position);
+   const {o,parent}=await slot(c,ownerId,input.parentId,input.position,true);
    const duplicate=await c.query("SELECT 1 FROM records WHERE kind='users' AND (lower(COALESCE(NULLIF(data->>'username',''),data->>'legacyUsername'))=lower($1) OR lower(data->>'email')=$2)",[name,email]);if(duplicate.rowCount)fail('Username or email is already registered',409);
    const data={name:first+' '+last,username:name,email,phone,sponsor:username(o.data),status:'Active',sourceTree:{childrenKnown:true},createdVia:'Member referral',location,country:'NP'};
    const r=(await c.query("INSERT INTO records(kind,data) VALUES('users',$1) RETURNING id",[data])).rows[0];

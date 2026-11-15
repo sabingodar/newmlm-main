@@ -8,5 +8,32 @@ window.mountCmsTabs=async({main,api,esc,toast})=>{
  const about=document.createElement('section');about.className='panel';main.append(about);await window.mountAboutAdmin({container:about,api,esc,toast});
  const legal=document.createElement('section');legal.className='panel';main.append(legal);await window.mountLegalAdmin({container:legal,api,esc,toast});
  const management=document.createElement('section');management.className='panel';main.append(management);await window.mountManagementAdmin({container:management,api,esc,toast});
- const items=[['legal','Terms, Privacy & Pages',legal],['general','General & Contact',main.querySelector('#cms-form')],['about','About',about],['management','Management',management],['blog','Blog',blog],['storefront','Slider & Testimonials',main.querySelector('.sf-storefront-editor')],['commissions','Commissions',main.querySelector('.product-settings')],['rewards','Coupons & Rewards',main.querySelector('.promotions-admin')],['email','Email Settings',mail]].filter(([,title,node])=>node);const tabs=document.createElement('div');tabs.className='cms-tabs';tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','CMS settings');main.querySelector('.page-heading').after(tabs);for(const [id,title,node] of items){const panel=document.createElement('div');panel.className='cms-tab-panel';panel.id='cms-panel-'+id;panel.setAttribute('role','tabpanel');node.before(panel);panel.append(node);const b=document.createElement('button');b.type='button';b.id='cms-tab-'+id;b.setAttribute('role','tab');b.setAttribute('aria-controls',panel.id);panel.setAttribute('aria-labelledby',b.id);b.textContent=title;b.onclick=()=>{for(const [key] of items){const active=key===id;main.querySelector('#cms-panel-'+key).hidden=!active;main.querySelector('#cms-tab-'+key).setAttribute('aria-selected',String(active));}sessionStorage.setItem('dls-cms-tab',id);};tabs.append(b);}const selected=sessionStorage.getItem('dls-cms-tab');main.querySelector('#cms-tab-'+(items.some(([key])=>key===selected)?selected:'general')).click();
+ const registration=document.createElement('section');
+ registration.className='panel';
+ main.append(registration);
+ const current=brand.registrationSettings||{earth:true,sky:true};
+ const canManageRegistration=window.adminCan('settings.manage');
+ registration.innerHTML=`<div class="section-head"><h2>Registration Settings</h2></div>
+ <form class="member-form">
+  <p>Select the positions members can use for direct registrations and referral links.</p>
+  <div class="form-grid">
+   <label class="toggle-field"><input name="earth" type="checkbox" ${current.earth?'checked':''} ${canManageRegistration?'':'disabled'}><span>Earth Position</span></label>
+   <label class="toggle-field"><input name="sky" type="checkbox" ${current.sky?'checked':''} ${canManageRegistration?'':'disabled'}><span>Sky Position</span></label>
+  </div>
+  <p>Turn both off to pause member referral registration.</p>
+  <p class="form-feedback" role="status"></p>
+  ${canManageRegistration?'<button class="primary" type="submit">Save registration settings</button>':''}
+ </form>`;
+ if(canManageRegistration)registration.querySelector('form').onsubmit=async event=>{
+  event.preventDefault();
+  const form=event.currentTarget,save=form.querySelector('button'),feedback=form.querySelector('[role=status]');
+  save.disabled=true;
+  try{
+   await api('settings','PUT',{registrationSettings:{earth:form.elements.earth.checked,sky:form.elements.sky.checked}});
+   feedback.textContent='Registration settings saved.';
+   toast('Registration settings saved');
+  }catch(error){feedback.textContent=error.message;}
+  finally{save.disabled=false;}
+ };
+ const items=[['legal','Terms, Privacy & Pages',legal],['general','General & Contact',main.querySelector('#cms-form')],['about','About',about],['management','Management',management],['registration','Registration Settings',registration],['blog','Blog',blog],['storefront','Slider & Testimonials',main.querySelector('.sf-storefront-editor')],['commissions','Commissions',main.querySelector('.product-settings')],['rewards','Coupons & Rewards',main.querySelector('.promotions-admin')],['email','Email Settings',mail]].filter(([,title,node])=>node);const tabs=document.createElement('div');tabs.className='cms-tabs';tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','CMS settings');main.querySelector('.page-heading').after(tabs);for(const [id,title,node] of items){const panel=document.createElement('div');panel.className='cms-tab-panel';panel.id='cms-panel-'+id;panel.setAttribute('role','tabpanel');node.before(panel);panel.append(node);const b=document.createElement('button');b.type='button';b.id='cms-tab-'+id;b.setAttribute('role','tab');b.setAttribute('aria-controls',panel.id);panel.setAttribute('aria-labelledby',b.id);b.textContent=title;b.onclick=()=>{for(const [key] of items){const active=key===id;main.querySelector('#cms-panel-'+key).hidden=!active;main.querySelector('#cms-tab-'+key).setAttribute('aria-selected',String(active));}sessionStorage.setItem('dls-cms-tab',id);};tabs.append(b);}const selected=sessionStorage.getItem('dls-cms-tab');main.querySelector('#cms-tab-'+(items.some(([key])=>key===selected)?selected:'general')).click();
 };
