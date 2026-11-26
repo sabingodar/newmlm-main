@@ -7,7 +7,8 @@ export function createMemberAuth(db){
   async function login(input,ip,userAgent){
     const rate=(await db.query(`INSERT INTO login_attempts(ip,attempts,expires_at) VALUES($1,1,now()+interval '15 minutes') ON CONFLICT(ip) DO UPDATE SET attempts=CASE WHEN login_attempts.expires_at<now() THEN 1 ELSE login_attempts.attempts+1 END,expires_at=CASE WHEN login_attempts.expires_at<now() THEN now()+interval '15 minutes' ELSE login_attempts.expires_at END RETURNING attempts`,['member:'+ip])).rows[0];
     if(rate.attempts>10)fail('Too many attempts. Try again in 15 minutes.',429);
-    const u=(await db.query("SELECT r.id,r.data,c.salt,c.password_hash,c.version FROM records r LEFT JOIN member_credentials c ON c.user_id=r.id WHERE r.kind='users' AND lower(COALESCE(NULLIF(r.data->>'username',''),r.data->>'legacyUsername'))=lower($1)",[String(input.username||'').slice(0,60)])).rows[0];
+    const matches=(await db.query("SELECT r.id,r.data,c.salt,c.password_hash,c.version FROM records r LEFT JOIN member_credentials c ON c.user_id=r.id WHERE r.kind='users' AND (lower(COALESCE(NULLIF(r.data->>'username',''),r.data->>'legacyUsername'))=lower($1) OR lower(r.data->>'memberId')=lower($1))",[String(input.username||'').trim().slice(0,60)])).rows;
+    const u=matches.length===1?matches[0]:null;
     const actual=await derive(String(input.password||'').slice(0,256),u?.salt||'member-dummy-salt',64);
     const success=!!u?.password_hash&&u.data.status==='Active'&&timingSafeEqual(actual,Buffer.from(u.password_hash,'hex'));
     if(u)await db.query('INSERT INTO member_login_history(user_id,ip,user_agent,success) VALUES($1,$2,$3,$4)',[u.id,ip,String(userAgent||'').slice(0,500),success]);

@@ -35,6 +35,7 @@ export function createBinaryTree(db){
  async function register(ownerId,input,{token,ip='local'}={}){
   const attempt=(await db.query("INSERT INTO login_attempts(ip,attempts,expires_at) VALUES($1,1,now()+interval '15 minutes') ON CONFLICT(ip) DO UPDATE SET attempts=CASE WHEN login_attempts.expires_at<now() THEN 1 ELSE login_attempts.attempts+1 END,expires_at=CASE WHEN login_attempts.expires_at<now() THEN now()+interval '15 minutes' ELSE login_attempts.expires_at END RETURNING attempts",['registration:'+ip])).rows[0];if(attempt.attempts>20)fail('Too many registrations. Try again in 15 minutes.',429);
   const first=String(input.firstName||'').trim(),last=String(input.lastName||'').trim(),email=String(input.email||'').trim().toLowerCase(),name=String(input.username||'').trim(),phone=String(input.phone||'').trim();
+  if(/^DLS\d+$/i.test(name))fail('DLS followed by numbers is reserved for member IDs');
   if(!first||!last||first.length>100||last.length>100)fail('Enter first and last name');if(!/^[a-zA-Z0-9_.-]{3,60}$/.test(name))fail('Username needs 3–60 letters, numbers, dots, underscores or hyphens');if(email.length>254||!/^\S+@[^\s@]+\.[^\s@]+$/.test(email))fail('Enter a valid email');if(phone.length>40)fail('Phone is too long');
   if(typeof input.password!=='string'||input.password.length<6||input.password.length>256||input.password!==input.confirmation)fail('Matching passwords of 6–256 characters are required');
   const salt=randomBytes(16).toString('hex'),hash=(await derive(input.password,salt,64)).toString('hex');
@@ -43,13 +44,13 @@ export function createBinaryTree(db){
    const {o,parent}=await slot(c,ownerId,input.parentId,input.position,true);
    const duplicate=await c.query("SELECT 1 FROM records WHERE kind='users' AND (lower(COALESCE(NULLIF(data->>'username',''),data->>'legacyUsername'))=lower($1) OR lower(data->>'email')=$2)",[name,email]);if(duplicate.rowCount)fail('Username or email is already registered',409);
    const data={name:first+' '+last,username:name,email,phone,sponsor:username(o.data),status:'Active',sourceTree:{childrenKnown:true},createdVia:'Member referral',location,country:'NP'};
-   const r=(await c.query("INSERT INTO records(kind,data) VALUES('users',$1) RETURNING id",[data])).rows[0];
+   const r=(await c.query("INSERT INTO records(kind,data) VALUES('users',$1) RETURNING id,data->>'memberId' AS member_id",[data])).rows[0];
    await c.query('UPDATE member_profiles SET first_name=$1,last_name=$2,referrer_id=$3,parent_id=$4,position=$5 WHERE user_id=$6',[first,last,ownerId,parent.id,input.position,r.id]);
    await persistLocation(c,r.id,location);
    await c.query('INSERT INTO member_credentials(user_id,salt,password_hash,version,must_change_password) VALUES($1,$2,$3,$4,$5)',[r.id,salt,hash,randomBytes(16).toString('hex'),!token]);
    if(invitationRow)await c.query('UPDATE member_referral_invites SET used_by=$1 WHERE token=$2',[r.id,invitationRow.token]);
    await c.query("INSERT INTO audit(action,kind,record_id,details) VALUES('Created referral member','users',$1,$2)",[r.id,{actor:Number(ownerId),parentId:Number(parent.id),position:input.position,invitation:!!token,financialCredit:false}]);
-   return {id:Number(r.id),username:name,mustChangePassword:!token};
+   return {id:Number(r.id),memberId:r.member_id,username:name,mustChangePassword:!token};
   });
  }
  return {tree,invite,inviteInfo,register};

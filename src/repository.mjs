@@ -109,6 +109,7 @@ export function createRepository(db) {
       if(kind==='products')await validateProductDetails(client,data,input,{isNew:!old});
       if(kind==='products'){if(data.vatRate===null||data.vatRate<0||data.vatRate>100)fail('VAT must be between 0 and 100 percent');if(!Number.isInteger(data.wholesaleMinQty)||data.wholesaleMinQty<1||data.wholesaleMinQty>10000)fail('Wholesale minimum quantity must be 1–10,000');for(const k of ['price','originalPrice','discountPrice','wholesalePrice','businessValue','vatRate'])if(data[k]!=null&&Math.abs(Number(data[k])*100-Math.round(Number(data[k])*100))>0.00001)fail('Prices must have at most two decimal places');if(data.imageUrl&&!/^\/(?:media\/\d+\.img|assets\/[a-f0-9-]{36})$/.test(data.imageUrl))fail('Use an uploaded product image');}
       if(kind==='users'){
+        if(!old&&/^DLS\d+$/i.test(data.username||''))fail('DLS followed by numbers is reserved for member IDs');
         if(input.location!==undefined)data.location=locationOf(input.location);
         if(data.username&&!/^[a-zA-Z0-9_.-]{3,60}$/.test(data.username))fail('Invalid username');
         if(old&&(old.username||old.legacyUsername)&&(old.username||old.legacyUsername)!==(data.username||data.legacyUsername||''))fail('Use member details; existing usernames cannot be changed');

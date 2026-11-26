@@ -4,3 +4,38 @@ window.openPasswordRecovery=(root,token='')=>{root.innerHTML=`<main class="recov
 function enhance(){document.querySelectorAll('input[type=password]:not([data-eye-ready])').forEach(input=>{input.dataset.eyeReady='true';const wrap=document.createElement('span');wrap.className='password-input-wrap';input.before(wrap);wrap.append(input);const button=document.createElement('button');button.type='button';button.className='password-eye';button.setAttribute('aria-label','Show password');button.setAttribute('aria-pressed','false');button.innerHTML=eye;button.onmousedown=e=>e.preventDefault();button.onclick=()=>{const start=input.selectionStart,end=input.selectionEnd,show=input.type==='password';input.type=show?'text':'password';button.classList.toggle('is-visible',show);button.setAttribute('aria-label',show?'Hide password':'Show password');button.setAttribute('aria-pressed',String(show));input.focus({preventScroll:true});if(start!==null&&end!==null)input.setSelectionRange(start,end);};wrap.append(button);});document.querySelectorAll('#member-login,#checkout-auth-form form').forEach(form=>{if(form.elements.confirmation||form.querySelector('[data-forgot-password]'))return;const button=document.createElement('button');button.type='button';button.className='text-button password-forgot';button.dataset.forgotPassword='true';button.textContent='Forgot password?';button.onclick=()=>window.openPasswordRecovery(document.querySelector('#member-app')||document.querySelector('#app'));form.append(button);});}
 new MutationObserver(enhance).observe(document.documentElement,{childList:true,subtree:true});enhance();
 })();
+
+window.showMemberCredentials = ({username,memberId,password}) => new Promise(resolve => {
+ const dialog=document.createElement('dialog');
+ dialog.className='tree-dialog member-credentials-dialog';
+ const body=document.createElement('div');
+ body.className='member-form';
+ const title=document.createElement('h2');
+ title.textContent='Your member login details';
+ body.append(title);
+ for(const [label,value] of [['Username',username],['User ID',memberId],['Password',password]]){
+  const field=document.createElement('label');
+  field.textContent=label;
+  const input=document.createElement('input');
+  input.readOnly=true;
+  input.value=value||'';
+  input.autocomplete='off';
+  field.append(input);
+  body.append(field);
+ }
+ const button=document.createElement('button');
+ button.type='button';
+ button.className='primary';
+ button.textContent='Close';
+ button.onclick=()=>{
+  body.querySelectorAll('input').forEach(input=>input.value='');
+  dialog.close();
+ };
+ body.append(button);
+ dialog.append(body);
+ dialog.oncancel=event=>event.preventDefault();
+ dialog.addEventListener('close',()=>{dialog.remove();resolve();},{once:true});
+ document.body.append(dialog);
+ dialog.showModal();
+ button.focus();
+});
