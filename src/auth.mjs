@@ -21,7 +21,7 @@ export function createAuth(db,username) {
       ON CONFLICT(ip) DO UPDATE SET attempts=CASE WHEN login_attempts.expires_at<now() THEN 1 ELSE login_attempts.attempts+1 END,
       expires_at=CASE WHEN login_attempts.expires_at<now() THEN now()+interval '15 minutes' ELSE login_attempts.expires_at END RETURNING attempts`,[ip]);
     if(rate.rows[0].attempts>10)fail('Too many attempts. Try again in 15 minutes.',429);
-    const user=(await db.query('SELECT * FROM administrators WHERE username=$1',[String(input.username||'')])).rows[0];
+    const user=(await db.query('SELECT * FROM administrators WHERE lower(username)=lower($1)',[String(input.username||'').trim().slice(0,100)])).rows[0];
     const actual=await derive(String(input.password||'').slice(0,1000),user?.salt||'dummy-authentication-salt',64);
     if(!user||user.status!=='Active'||user.deleted_at||!timingSafeEqual(actual,Buffer.from(user.password_hash,'hex')))fail('Incorrect username or password',401);
     const token=randomBytes(32).toString('hex');

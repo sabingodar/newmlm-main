@@ -104,8 +104,18 @@ const server=http.createServer(async(req,res)=>{
       if(path==='/api/member/forgot-password'&&req.method==='POST')return json(res,200,await recovery.request(await body(req),req.socket.remoteAddress));
       if(path==='/api/member/reset-password'&&req.method==='POST')return json(res,200,await recovery.reset(await body(req)));
       if(path==='/api/login'&&req.method==='POST') {
-        const token=await auth.login(req.socket.remoteAddress,await body(req));
-        return json(res,200,{username:(await auth.principal('session='+token)).username},{'Set-Cookie':`session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${production?'; Secure':''}`});
+        const input=await body(req);
+        // A shared form signs members into the member portal using a member-only cookie.
+        const adminExists=(await db.query('SELECT 1 FROM administrators WHERE lower(username)=lower($1)',[String(input.username||'').trim().slice(0,100)])).rowCount;
+        if(adminExists){
+          const token=await auth.login(req.socket.remoteAddress,input);
+          return json(res,200,{accountType:'admin',username:(await auth.principal('session='+token)).username},
+            {'Set-Cookie':`session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${production?'; Secure':''}`});
+        }
+        const token=await memberAuth.login(input,req.socket.remoteAddress,req.headers['user-agent']);
+        const member=await memberAuth.session('member_session='+token);
+        return json(res,200,{accountType:'member',username:member.data.username||member.data.legacyUsername,memberId:member.data.memberId},
+          {'Set-Cookie':`member_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${production?'; Secure':''}`});
       }
       if(path==='/api/public'&&req.method==='GET') {
         const products=(await commerce.catalog('retail')).items.map(({dispatchCommission,rankCommissions,regionalCommissions,...p})=>p);
